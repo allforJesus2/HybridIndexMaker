@@ -41,7 +41,7 @@ make it so the user draw boxes on the image that crop and save the image.
 make it so we have a write to xlsx button to write the contents of the ocr to the xlwings document
 
 TODO
-OPEN WINDOW NEXT TO
+OPEN WINDOW NEXT TCO
 CORRECTION FUNCTION
 RIGHT CLICK TO REMOVE BOX
 SERVICES WITH NO LINE AND EQUIP CONFLICT
@@ -57,12 +57,16 @@ configuration: inst scaling, reader settings, blacklist
 refactor release box
 set minscore inst
 
-FIX LINE EQUIP CONFLICT
 THICK LINE FOR CURRENT BOX
 ZOOM
 RIGHT CLICK DELETE BOX
 REMEMBER OCR BOX LEFT CLICK
 ONLY INST
+start window full screen
+
+fix git
+
+OTHER READER SETTINGS
 '''
 # pip install tkinter PIL xlwings detecto easyocr opencv-python numpy matplotlib torch PyMuPDF
 from functions import *
@@ -76,16 +80,16 @@ import easyocr
 import cv2
 import numpy as np
 import importlib.util
+from reader_settings import SetReaderSettings
+import json
 
 class ImageViewerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Image Viewer")
 
-
-
         #reader settings
-        # Initialize OCR settings
+        # Initialize General OCR settings
         self.text_threshold = 0.7
         self.low_text = 0.4
         self.link_threshold = 0.4
@@ -95,16 +99,52 @@ class ImageViewerApp:
         self.width_ths = 0.5
         self.add_margin = 0.1
 
+        # Instruemnt reader settings
+        self.instrument_reader_settings = {
+            "low_text": 0.3,
+            "min_size": 10,
+            "ycenter_ths": 0.5,
+            "height_ths": 0.5,
+            "width_ths": 6.0,
+            "add_margin": -0.1,
+            "link_threshold": 0.2,
+            "text_threshold": 0.3,
+            "mag_ratio": 3.0,
+            "allowlist": '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ()',
+            "decoder": 'beamsearch'
+        }
+
+
+        # general reader settings
+        self.reader_settings = {
+            "low_text": 0.3,
+            "min_size": 10,
+            "ycenter_ths": 0.5,
+            "height_ths": 0.5,
+            "width_ths": 6.0,
+            "add_margin": 0.1,
+            "link_threshold": 0.2,
+            "text_threshold": 0.3,
+            "mag_ratio": 1.0,
+            "allowlist": '',
+            "decoder": 'beamsearch'
+        }
+        #min_size = 10, low_text = 0.5, link_threshold = 0.2,
+        #text_threshold = 0.3, width_ths = 6.0, decoder = 'beamsearch'
+
+
         self.line = None
         self.service_in = None
         self.service_out = None
         self.equipment = None
         self.inst_data = None
         self.pid = None
+        self.comment = None
         self.persistent_boxes = []
         self.persistent_texts = []
         self.correct_fn = None
         self.correct_fn_path = None
+
 
         self.image_list = []
         self.current_image_index = 0
@@ -121,7 +161,8 @@ class ImageViewerApp:
             'line': self.capture_line,
             'equipment': self.capture_equipment,
             'service_in': self.capture_service_in,
-            'service_out': self.capture_service_out
+            'service_out': self.capture_service_out,
+            'comment': self.capture_comment
         }
 
         print('loading reader')
@@ -131,7 +172,7 @@ class ImageViewerApp:
         self.labels = ['inst', 'dcs', 'ball', 'globe', 'diaphragm', 'knife', 'vball', 'plug', 'butterfly', 'gate']
 
         try:
-            self.model_inst_path = r"models\saved_model_vid-v3.18_GEVO.pth"
+            self.model_inst_path = r"saved_model_vid-v3.18_GEVO.pth"
             # load instrument recognition model
             print('loading model')
             self.model_inst = Model.load(self.model_inst_path, self.labels)
@@ -142,6 +183,7 @@ class ImageViewerApp:
 
         self.minscore_inst = 0.7
         self.inst_data = []
+        self.active_inst_box_count = 0
 
 
         # Create a menu bar
@@ -160,6 +202,8 @@ class ImageViewerApp:
         self.commands_menu.add_command(label="Capture Equipment", command=lambda: self.set_capture('equipment'))
         self.commands_menu.add_command(label="Capture Service In", command=lambda: self.set_capture('service_in'))
         self.commands_menu.add_command(label="Capture Service Out", command=lambda: self.set_capture('service_out'))
+        self.commands_menu.add_command(label="Capture comment", command=lambda: self.set_capture('comment'))
+
         self.commands_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
         self.commands_menu.add_command(label="Clear instrument group", command=self.clear_instrument_group)
         self.commands_menu.add_command(label="Go to Page", command=self.open_go_to_page)
@@ -168,7 +212,11 @@ class ImageViewerApp:
         self.commands_menu.add_command(label="Load Tag Correction Function", command=self.load_correct_fn)
         self.commands_menu.add_command(label="Load Object detection model", command=self.load_model)
         self.commands_menu.add_command(label="Merge pdfs", command=self.merge_pdfs)
-
+        self.commands_menu.add_command(label="Set comment", command=self.set_comment)
+        self.commands_menu.add_command(label="Swap services", command=self.swap_services)
+        self.commands_menu.add_command(label="Open instrument reader settings", command=self.open_instrument_reader_settings)
+        self.commands_menu.add_command(label="Save Settings", command=self.save_attributes)
+        self.commands_menu.add_command(label="Open general reader settings", command=self.open_general_reader_settings)
         self.menu_bar.add_cascade(label="Commands", menu=self.commands_menu)
 
         self.root.config(menu=self.menu_bar)
@@ -184,7 +232,7 @@ class ImageViewerApp:
         self.data_window.geometry("400x400")
 
         # Create a Text widget to display the captured data
-        self.data_text = tk.Text(self.data_window, wrap=tk.WORD)
+        self.data_text = tk.Text(self.data_window, wrap=tk.WORD, font=("Courier", 16))
         self.data_text.pack(fill=tk.BOTH, expand=True)
 
         # Bind the window close event to update the data display
@@ -204,6 +252,10 @@ class ImageViewerApp:
         self.root.bind('x', lambda event: self.set_capture('service_out'))
         self.root.bind('w', lambda event: self.append_data_to_excel())
         self.root.bind('c', lambda event: self.clear_instrument_group())
+        self.root.bind('v', lambda event: self.vote())
+        self.root.bind('s', lambda event: self.swap_services())
+        self.root.bind('g', lambda event: self.set_capture('comment'))
+
         # key bindings
         # Bind key shortcuts to the respective commands
         self.root.bind('N', lambda event: self.next_image())
@@ -216,6 +268,9 @@ class ImageViewerApp:
         self.root.bind('X', lambda event: self.set_capture('service_out'))
         self.root.bind('W', lambda event: self.append_data_to_excel())
         self.root.bind('C', lambda event: self.clear_instrument_group())
+        self.root.bind('V', lambda event: self.vote())
+        self.root.bind('S', lambda event: self.swap_services())
+        self.root.bind('G', lambda event: self.set_capture('comment'))
 
         # shift key binding
         self.shift_held = False
@@ -226,6 +281,73 @@ class ImageViewerApp:
         self.canvas.bind('<Button-1>', self.start_drawing)
         self.canvas.bind('<B1-Motion>', self.draw_box)
         self.canvas.bind('<ButtonRelease-1>', self.end_drawing)
+
+    def save_attributes(self):
+        """Save class attributes to a JSON file"""
+        attributes_to_save = [
+            'pid_coords',
+            'current_image_index',
+            'instrument_reader_settings'
+            # Add any other attribute names you want to save here
+        ]
+
+        attributes = {attr_name: getattr(self, attr_name) for attr_name in attributes_to_save}
+
+        attributes_file = os.path.join(self.folder_path, 'attributes.json')
+        with open(attributes_file, 'w') as file:
+            json.dump(attributes, file)
+
+    def load_attributes(self):
+        """Load class attributes from a JSON file"""
+        attributes_file = os.path.join(self.folder_path, 'attributes.json')
+        if os.path.exists(attributes_file):
+            try:
+                with open(attributes_file, 'r') as file:
+                    attributes = json.load(file)
+                    # Automatically load attributes if they exist in the JSON file
+                    for key, value in attributes.items():
+                        if hasattr(self, key):
+                            setattr(self, key, value)
+            except json.JSONDecodeError:
+                print("Error: Invalid JSON file format.")
+        else:
+            print("Attribute file not found. Using default values.")
+
+    def set_instrument_reader_settings(self, rs):
+        self.instrument_reader_settings = rs
+        print('instrument reader settings: ', rs)
+
+    def set_reader_settings(self, rs):
+        self.reader_settings = rs
+        print('reader settings: ', rs)
+
+
+    def open_instrument_reader_settings(self):
+        # Create a new window for ObjectDetectionApp
+        img_path = 'instrument_capture.png'
+        if os.path.exists(img_path):
+            reader_settings_root = tk.Toplevel()
+            SetReaderSettings(reader_settings_root, img_path, self.reader,
+                              reader_settings=self.instrument_reader_settings,
+                              callback=self.set_instrument_reader_settings)
+        else:
+            print('first capture an instrument')
+
+
+    def open_general_reader_settings(self):
+        # Create a new window for ObjectDetectionApp
+        img_path = 'ocr_capture.png'
+        if os.path.exists(img_path):
+            reader_settings_root = tk.Toplevel()
+            SetReaderSettings(reader_settings_root, img_path, self.reader,
+                              reader_settings=self.reader_settings,
+                              callback=self.set_reader_settings)
+        else:
+            print('first capture an instrument')
+
+    def swap_services(self):
+        self.service_in, self.service_out = self.service_out, self.service_in
+        self.update_data_display()
 
     def merge_pdfs(self):
         folder_that_has_pdfs = filedialog.askdirectory(title='Folder that has PDFs')
@@ -295,8 +417,10 @@ class ImageViewerApp:
 
     def clear_instrument_group(self):
 
+
         if self.inst_data:
-            self.canvas.delete(self.persistent_boxes[-1])  # Remove the previous box
+            for box in self.persistent_boxes[-self.active_inst_box_count:]:
+                self.canvas.delete(box)  # Remove the previous box
         self.inst_data = []
         self.update_data_display()
 
@@ -309,6 +433,8 @@ class ImageViewerApp:
         if self.folder_path:
             self.image_list = [os.path.join(self.folder_path, f) for f in os.listdir(self.folder_path) if f.endswith(('.png', '.jpg', '.jpeg', '.gif'))]
             self.current_image_index = 0
+            self.load_attributes()
+
             self.load_image()
 
     def append_data_to_excel(self):
@@ -331,7 +457,7 @@ class ImageViewerApp:
                 wb.sheets.add(name='Instrument Index')
 
                 # Define the header row
-                header = ['PID', 'TAG', 'TAG_NO', 'LABEL', 'LINE/EQUIP', 'SERVICE']
+                header = ['PID', 'TAG', 'TAG_NO', 'LABEL', 'LINE/EQUIP', 'SERVICE', 'COMMENT']
 
                 # Write the header row to the first sheet of the workbook
                 sheet = wb.sheets['Instrument Index']
@@ -346,8 +472,6 @@ class ImageViewerApp:
                 ws.range(last_row + 1, 2).value = data['tag']
                 ws.range(last_row + 1, 3).value = data['tag_no']
                 ws.range(last_row + 1, 4).value = data['label']
-                if self.line:
-                    ws.range(last_row + 1, 5).value = self.line
 
                 if self.service_in and self.service_out:
                     ws.range(last_row + 1, 6).value = self.service_in + ' TO ' + self.service_out
@@ -356,17 +480,39 @@ class ImageViewerApp:
                 elif self.service_out:
                     ws.range(last_row + 1, 6).value = 'TO ' + self.service_out
 
-                if self.equipment:
+                if self.line:
+                    ws.range(last_row + 1, 5).value = self.line
+                elif self.equipment:
                     words = self.equipment.split(' ')
                     ws.range(last_row + 1, 5).value = words[0]
                     ws.range(last_row + 1, 6).value = ' '.join(words[1:])
 
+                if self.comment:
+                    ws.range(last_row + 1, 7).value = self.comment
+
+            #self.persistent_boxes.append(self.current_box)
+
+            # Slice the list to get the last 4 items
+            active_boxes = self.persistent_boxes[-self.active_inst_box_count:]
+
+            # Iterate over the sliced list and change the outline color of each item
+            for box_id in active_boxes:
+                self.canvas.itemconfig(box_id, outline='#87CEEB')
+
+            self.active_inst_box_count = 0
+            #self.comment = ''
+
+            #change last box color
 
             self.inst_data = []
             self.update_data_display()
+
         except Exception as e:
             tk.messagebox.showerror(e)
             print(f"error {e}")
+
+    def set_comment(self):
+        self.comment = tk.simpledialog.askstring("Input", "Please enter a Comment:")
 
     def load_image(self):
         if self.image_list:
@@ -432,10 +578,12 @@ class ImageViewerApp:
             if self.pid_coords:
                 # Crop the image using the scaled coordinates
                 print(self.pid_coords)
+
                 cropped_image = self.original_image.crop(self.pid_coords)
 
                 cropped_image = pil_to_cv2(cropped_image)
-
+                #this is weird but we need to set the self.cropped coords so that we dont let the last used coord overwrite pid
+                self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
                 self.capture_pid(cropped_image)
 
                 self.update_data_display()
@@ -445,7 +593,6 @@ class ImageViewerApp:
 
     def previous_image(self):
         self.go_to_page(self.current_image_index - 1)
-
 
     def start_drawing(self, event):
         self.mouse_pressed = True
@@ -489,22 +636,18 @@ class ImageViewerApp:
                 # Crop the image using the scaled coordinates
                 cropped_image = self.original_image.crop((self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2))
                 self.cropped_image = pil_to_cv2(cropped_image)
-                #here we do perform a different command based on the self.capture
+                filename = 'ocr_capture.png'
+                cv2.imwrite(filename, self.cropped_image)
+
                 # Perform the action based on self.capture
                 if self.capture in self.capture_actions:
                     self.capture_actions[self.capture](self.cropped_image)
-                    # self.capture == 'pid':
-                    #    self.pid_coords = (self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2)
                     self.update_data_display()
                 else:
                     print(f"Invalid capture action: {self.capture}")
 
-                # If self.capture is 'instrument', keep the box and text on the canvas
-                if self.capture == 'instruments':
-                    self.persistent_boxes.append(self.current_box)
-                    #self.persistent_texts.append(self.current_text)
-                else:
-                    # Remove the cropping box and the text
+                # Remove the cropping box and the text
+                if self.current_box not in self.persistent_boxes:
                     self.canvas.delete(self.current_box)
                     #self.canvas.delete(self.current_text)
                     self.current_box = None
@@ -521,30 +664,58 @@ class ImageViewerApp:
         self.persistent_boxes = []
         self.persistent_texts = []
 
-
-
-
     def capture_pid(self, cropped_image):
         print('Perform actions for capturing PID')
         # Perform actions for capturing line
-        result = self.reader.readtext(cropped_image, min_size=10, low_text=0.5, link_threshold=0.2,
-                                 text_threshold=0.3, width_ths=6.0, decoder='beamsearch')
+        result = self.reader.readtext(cropped_image, **self.reader_settings)
         if result[0][1]:
             self.pid = result[0][1]
             self.pid_coords = (self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2)
         else:
             print('no result')
 
+    def capture_comment(self, cropped_image):
+        print('Perform actions for capturing a comment')
+        # Perform actions for capturing line
+        result = self.reader.readtext(cropped_image, **self.reader_settings)
+        if result:
+            self.comment = result[0][1]
+        else:
+            self.comment =''
+
     def capture_instruments(self, cropped_image):
         # Perform actions for capturing instruments
         # cropped_image = pil_to_cv2(cropped_image)
         labels, boxes, scores = model_predict_on_mozaic(cropped_image, self.model_inst)
-        inst_prediction_data = zip(labels, boxes, scores)
-        inst_data = return_inst_data(inst_prediction_data, cropped_image, 0, self.reader, self.minscore_inst,
-                                     self.correct_fn)
-        self.inst_data.extend(inst_data)
-        print(self.inst_data)
+        if labels:
+            #self.last_inst_box = self.current_box
+            self.persistent_boxes.append(self.current_box)
+            self.active_inst_box_count += 1
+            # self.persistent_texts.append(self.current_text)
+            inst_prediction_data = zip(labels, boxes, scores)
+            inst_data = return_inst_data(inst_prediction_data, cropped_image, 0, self.reader, self.minscore_inst,
+                                         self.correct_fn, self.instrument_reader_settings)
 
+            self.inst_data.extend(inst_data)
+            print(self.inst_data)
+
+    def vote(self):
+        # Create a dictionary to store tag_no counts
+        tag_counts = {}
+
+        # Count the occurrences of each tag_no
+        for data in self.inst_data:
+            tag_no = data['tag_no']
+            tag_counts[tag_no] = tag_counts.get(tag_no, 0) + 1
+
+        # Find the most frequent tag_no
+        most_frequent_tag_no = max(tag_counts, key=tag_counts.get)
+
+        # Assign the most frequent tag_no to each entry
+        for data in self.inst_data:
+            data['tag_no'] = most_frequent_tag_no
+
+        self.update_data_display()
 
     def capture_line(self, cropped_image):
         # Check if height is greater than width
@@ -554,18 +725,24 @@ class ImageViewerApp:
             cropped_image = cv2.rotate(cropped_image, cv2.ROTATE_90_CLOCKWISE)
 
         # Perform actions for capturing line
-        result = self.reader.readtext(cropped_image, min_size=10, low_text=0.5, link_threshold=0.2,
-                                 text_threshold=0.3, width_ths=6.0, decoder='beamsearch')
+        result = self.reader.readtext(cropped_image, **self.reader_settings)
         if result[0][1]:
             self.line = result[0][1]
+            #x1, y1, x2, y2 = self.canvas.coords(self.current_box)
+            #self.persistent_boxes.append(self.current_box)
+
+            #self.current_text = self.canvas.create_text(x1, y1 - 10, text=self.line,
+            #                                            font=('Helvetica', 8, 'bold'),
+            #                                            justify='left', fill='orange')
+
+
         else:
             print('no result')
         self.equipment = None
 
     def capture_equipment(self, cropped_image):
         # Perform actions for capturing line
-        result = self.reader.readtext(cropped_image, min_size=10, low_text=0.5, link_threshold=0.2,
-                                 text_threshold=0.3, width_ths=6.0, decoder='beamsearch')
+        result = self.reader.readtext(cropped_image, **self.reader_settings)
         if result:
             self.equipment = ' '.join([box[1] for box in result])
             print(self.equipment)
@@ -576,8 +753,7 @@ class ImageViewerApp:
 
     def capture_service_in(self, cropped_image):
         # Perform actions for capturing service in
-        result = self.reader.readtext(cropped_image, min_size=10, low_text=0.5, link_threshold=0.2,
-                                 text_threshold=0.3, width_ths=6.0, decoder='beamsearch')
+        result = self.reader.readtext(cropped_image, **self.reader_settings)
 
         if not result:
             self.service_in = ''
@@ -588,12 +764,13 @@ class ImageViewerApp:
         if not self.shift_held:
             self.service_in = just_text
         else:
-            self.service_in = merge_common_substring_with_single_chars(self.service_in, just_text)
+            self.service_in = merge_common_substrings(self.service_in, just_text)
+
+        self.equipment = None
 
     def capture_service_out(self, cropped_image):
         # Perform actions for capturing service out
-        result = self.reader.readtext(cropped_image, min_size=10, low_text=0.5, link_threshold=0.2,
-                                 text_threshold=0.3, width_ths=6.0, decoder='beamsearch')
+        result = self.reader.readtext(cropped_image, **self.reader_settings)
 
         if not result:
             self.service_out = ''
@@ -604,9 +781,9 @@ class ImageViewerApp:
         if not self.shift_held:
             self.service_out = just_text
         else:
-            self.service_out = merge_common_substring_with_single_chars(self.service_out, just_text)
+            self.service_out = merge_common_substrings(self.service_out, just_text)
 
-
+        self.equipment = None
 
     def update_data_display(self):
         self.data_text.delete('1.0', tk.END)  # Clear the text box
@@ -616,10 +793,11 @@ class ImageViewerApp:
         self.data_text.insert(tk.END, f"Service In: {self.service_in}\n")
         self.data_text.insert(tk.END, f"Service Out: {self.service_out}\n")
         self.data_text.insert(tk.END, f"Equipment: {self.equipment}\n")
+        self.data_text.insert(tk.END, f"Comment: {self.comment}\n")
 
         self.data_text.insert(tk.END, f"Instrument Data:\n")
         for data in self.inst_data:
-            self.data_text.insert(tk.END, f"{data}\n")
+            self.data_text.insert(tk.END, f"{data['label']}\t{data['tag']}\t{data['tag_no']}\n")
 
 
 if __name__ == "__main__":

@@ -74,6 +74,37 @@ def merge_common_substring_with_single_chars(str1, str2):
     # Step 5: Append single_chars_str to match_text and return
     return match_text + single_chars_str
 
+
+def merge_common_substrings(str1, str2):
+    # Split the strings into lists of words
+    words1 = str1.split()
+    words2 = str2.split()
+
+    merged_words = []
+    i, j = 0, 0
+
+    while i < len(words1) and j < len(words2):
+        if words1[i] == words2[j]:
+            merged_words.append(words1[i])
+            i += 1
+            j += 1
+        else:
+            merged_word = ""
+            if i < len(words1):
+                merged_word += words1[i]
+            if j < len(words2):
+                merged_word += "/" + words2[j]
+            merged_words.append(merged_word)
+            i += 1
+            j += 1
+
+    # Append any remaining words from either string
+    merged_words.extend(words1[i:])
+    merged_words.extend(["/" + word for word in words2[j:]])
+
+    return " ".join(merged_words)
+
+
 def pdf2png(pdf_file, dpi):
     doc = fitz.open(pdf_file)
 
@@ -197,8 +228,9 @@ def overlap(box1, box2):
 
     return overlap_ratio
 
-def return_inst_data(prediction_data, img, clip, reader, minscore, correct_fn):
+def return_inst_data(prediction_data, img, clip, reader, minscore, correct_fn, rs):
     all_data = []
+    got_one = False
     for label, box, score in prediction_data:
         if (label == 'inst' or label == 'dcs') and score > minscore:
             tag, tag_no = '', ''
@@ -206,18 +238,10 @@ def return_inst_data(prediction_data, img, clip, reader, minscore, correct_fn):
 
             # Crop the image to the box region
             crop_img = img[int(y_min) + clip:int(y_max) - clip, int(x_min) + clip:int(x_max) - clip]
+            #crop_img = cv2.resize(crop_img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
 
-
-            # enhance
-            crop_img = cv2.resize(crop_img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
             try:
-                # Perform OCR on the cropped image using EasyOCR
-                #result = reader.readtext(crop_img)#, min_size=10, low_text=0.4, link_threshold=.4,
-                #                         text_threshold=0.3, allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ()')
-
-                result = reader.readtext(crop_img, min_size=10, low_text=0.3, link_threshold=0.2,
-                                         text_threshold=0.3, width_ths=6.0, decoder='beamsearch',
-                                         allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ()')
+                results = reader.readtext(crop_img, **rs)
 
 
             except Exception as e:
@@ -226,9 +250,15 @@ def return_inst_data(prediction_data, img, clip, reader, minscore, correct_fn):
 
             # Extract the recognized text from the EasyOCR result
             # pdb.set_trace()
-            if result:
-                tag = result[0][1]
-                tag_no = ' '.join([box[1] for box in result[1:]])
+
+            if results:
+
+                if got_one == False:
+                    #SAVE LITTLE BOX
+                    filename = 'instrument_capture.png'
+                    cv2.imwrite(filename, crop_img)
+                    got_one = True
+
 
                 ''' SAVE LITTLE BOXES
                 dest_folder = 'inst_crop_folder'
@@ -237,16 +267,19 @@ def return_inst_data(prediction_data, img, clip, reader, minscore, correct_fn):
                 dest_file_path = os.path.join(dest_folder, filename)
                 cv2.imwrite(dest_file_path, crop_img)
                 '''
-
                 if correct_fn:
                     print('doing correct')
-                    tag, tag_no = correct_fn(tag, tag_no)
+                    result_text = ' '.join([result[1] for result in results])
+                    tag, tag_no = correct_fn(result_text)
+                else:
+                    tag = results[0][1]
+                    tag_no = ' '.join([box[1] for box in results[1:]])
             else:
                 continue
 
             data = {'tag':tag, 'tag_no':tag_no, 'label':label}
             all_data.append(data)
-
+    got_one = False
     return all_data
     # tag, tag_no, label, line_id, xv_type, valve_type, size, inst_alarm
 

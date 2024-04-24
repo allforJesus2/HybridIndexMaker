@@ -1,7 +1,22 @@
 import re
 
-def correct(tag, tag_no):
+#this is the main correct_fn
+def correct(result_words):
     # remove numbers from tag
+    #box, text, score = result
+    words = result_text.split()
+
+    if len(words) > 2:
+        for i, word in enumerate(words):
+            if len(word) > 2:
+        tag, tag_no = words[0], words[1]
+
+    if len(words) == 1:
+        tag, tag_no = words[0], ''
+
+    if len(words) == 3:
+        tag, tag_no = words[0], words[1]
+
     tag = replace_numbers_with_letters(tag)
     tag_no = correct_tag_no(tag_no)
     return tag, tag_no
