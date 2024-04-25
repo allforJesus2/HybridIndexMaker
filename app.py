@@ -102,8 +102,8 @@ class ImageViewerApp:
 
         self.labels = ['inst', 'dcs', 'ball', 'globe', 'diaphragm', 'knife', 'vball', 'plug', 'butterfly', 'gate']
 
+        self.model_inst_path = r"saved_model_vid-v3.18_GEVO.pth"
         try:
-            self.model_inst_path = r"saved_model_vid-v3.18_GEVO.pth"
             # load instrument recognition model
             print('loading model')
             self.model_inst = Model.load(self.model_inst_path, self.labels)
@@ -147,21 +147,19 @@ class ImageViewerApp:
         self.capture_menu.add_command(label="Capture comment", command=lambda: self.set_capture('comment'))
         self.menu_bar.add_cascade(label="Capture", menu=self.capture_menu)
 
-
-
-
+        # Create page menu
         self.page_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.page_menu.add_command(label="Next", command=self.next_image)
         self.page_menu.add_command(label="Previous", command=self.previous_image)
         self.page_menu.add_command(label="Go to Page", command=self.open_go_to_page)
         self.menu_bar.add_cascade(label="Page", menu=self.page_menu)
 
+        # settings menu
         self.settings_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.settings_menu.add_command(label="Open instrument reader settings", command=self.open_instrument_reader_settings)
         self.settings_menu.add_command(label="Open general reader settings", command=self.open_general_reader_settings)
         self.settings_menu.add_command(label="Save Settings", command=self.save_attributes)
         self.menu_bar.add_cascade(label="Settings", menu=self.settings_menu)
-
 
         # Create a Help menu
         self.help_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -241,7 +239,7 @@ class ImageViewerApp:
         e/E: Capture Equipment
         z/Z: Capture Service In
         x/X: Capture Service Out
-        w/W: Append Data to Excel
+        w/W: Write Data to Excel
         c/C: Clear Instrument Group
         v/V: Vote to normalize tag numbers
         s/S: Swap Services
@@ -253,7 +251,8 @@ class ImageViewerApp:
         attributes_to_save = [
             'pid_coords',
             'current_image_index',
-            'instrument_reader_settings'
+            'instrument_reader_settings',
+            'model_inst_path'
             # Add any other attribute names you want to save here
         ]
 
@@ -287,7 +286,6 @@ class ImageViewerApp:
         self.reader_settings = rs
         print('reader settings: ', rs)
 
-
     def open_instrument_reader_settings(self):
         # Create a new window for ObjectDetectionApp
         img_path = 'instrument_capture.png'
@@ -298,7 +296,6 @@ class ImageViewerApp:
                               callback=self.set_instrument_reader_settings)
         else:
             print('first capture an instrument')
-
 
     def open_general_reader_settings(self):
         # Create a new window for ObjectDetectionApp
@@ -608,8 +605,8 @@ class ImageViewerApp:
                 if self.current_box not in self.persistent_boxes:
                     self.canvas.delete(self.current_box)
                     #self.canvas.delete(self.current_text)
-                    self.current_box = None
-                    #self.current_text = None
+
+                self.current_box = None
 
     def clear_boxes(self):
 
