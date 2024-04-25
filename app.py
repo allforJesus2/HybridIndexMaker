@@ -18,19 +18,11 @@ class ImageViewerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Image Viewer")
-
+        root.wm_state('zoomed')
         #reader settings
-        # Initialize General OCR settings
-        self.text_threshold = 0.7
-        self.low_text = 0.4
-        self.link_threshold = 0.4
-        self.min_size = 10
-        self.ycenter_ths = 0.5
-        self.height_ths = 0.5
-        self.width_ths = 0.5
-        self.add_margin = 0.1
+        # Initialize General OCR setting
 
-        # Instruemnt reader settings
+        # Instrument reader settings
         self.instrument_reader_settings = {
             "low_text": 0.3,
             "min_size": 10,
@@ -44,7 +36,6 @@ class ImageViewerApp:
             "allowlist": '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ()',
             "decoder": 'beamsearch'
         }
-
 
         # general reader settings
         self.reader_settings = {
@@ -60,9 +51,6 @@ class ImageViewerApp:
             "allowlist": '',
             "decoder": 'beamsearch'
         }
-        #min_size = 10, low_text = 0.5, link_threshold = 0.2,
-        #text_threshold = 0.3, width_ths = 6.0, decoder = 'beamsearch'
-
 
         self.line = None
         self.service_in = None
@@ -83,6 +71,7 @@ class ImageViewerApp:
         self.start_x = 0
         self.start_y = 0
         self.current_box = None
+        self.current_text = None
         self.wb = None
         self.sheet = None
         self.capture = 'pid'
@@ -176,10 +165,21 @@ class ImageViewerApp:
         # Create a separate window for displaying captured data
         self.data_window = tk.Toplevel(self.root)
         self.data_window.title("Captured Data")
-        self.data_window.geometry("400x400")
+
+        # Get the screen width and height
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        # Calculate the x-coordinate and height of the data_window
+        x = screen_width - 260  # assuming a width of 400 for the data_window
+        height = screen_height-100
+
+        # Set the geometry of the data_window
+        self.data_window.geometry(f'250x{height}+{x}+32')
+
 
         # Create a Text widget to display the captured data
-        self.data_text = tk.Text(self.data_window, wrap=tk.WORD, font=("Courier", 16))
+        self.data_text = tk.Text(self.data_window, wrap=tk.WORD, font=("Courier", 14))
         self.data_text.pack(fill=tk.BOTH, expand=True)
 
         # Bind the window close event to update the data display
@@ -566,7 +566,8 @@ class ImageViewerApp:
         if self.mouse_pressed:
             if self.current_box and self.current_box not in self.persistent_boxes:
                 self.canvas.delete(self.current_box)  # Remove the previous box
-                #self.canvas.delete(self.current_text)  # Remove the previous text
+                self.canvas.delete(self.current_text)  # Remove the previous text
+                # we do it here so we can view the last line capture
             x1, y1 = self.start_x, self.start_y
             x2, y2 = event.x, event.y
 
@@ -577,6 +578,7 @@ class ImageViewerApp:
         if self.mouse_pressed:
             self.mouse_pressed = False
             if self.current_box:
+
                 # Calculate the coordinates of the cropping box
                 x1, y1, x2, y2 = self.canvas.coords(self.current_box)
                 # Ensure the coordinates are in the correct order
@@ -601,23 +603,21 @@ class ImageViewerApp:
                 else:
                     print(f"Invalid capture action: {self.capture}")
 
-                # Remove the cropping box and the text
-                if self.current_box not in self.persistent_boxes:
-                    self.canvas.delete(self.current_box)
-                    #self.canvas.delete(self.current_text)
-
-                self.current_box = None
+            # We do this so that we dont click and re-extend the instrument group
+            if self.current_box not in self.persistent_boxes:
+                self.canvas.delete(self.current_box)
+            self.current_box = None
 
     def clear_boxes(self):
 
 
-        for box, text in zip(self.persistent_boxes, self.persistent_texts):
+        for box in self.persistent_boxes:
             self.canvas.delete(box)  # Remove the previous box
-            self.canvas.delete(text)
+            #self.canvas.delete(text)
 
         # not sure if this is necessary as zip clears stuff
         self.persistent_boxes = []
-        self.persistent_texts = []
+        #self.persistent_texts = []
 
     def capture_pid(self, cropped_image):
         print('Perform actions for capturing PID')
@@ -637,6 +637,9 @@ class ImageViewerApp:
             self.comment =  ' '.join([box[1] for box in result])
         else:
             self.comment =''
+
+        #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.comment, fill="blue", font=("Courier", 12))
+
 
     def capture_instruments(self, cropped_image):
         # Perform actions for capturing instruments
@@ -681,12 +684,14 @@ class ImageViewerApp:
 
         # Perform actions for capturing line
         result = self.reader.readtext(cropped_image, **self.reader_settings)
-        if result[0][1]:
+        if result:
             #self.line = result[0][1]
             self.line = ' '.join([box[1] for box in result])
         else:
             print('no result')
         self.equipment = None
+        self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.line, fill="blue", font=("Courier", 12))
+
 
     def capture_equipment(self, cropped_image):
         # Perform actions for capturing line
@@ -698,6 +703,8 @@ class ImageViewerApp:
             self.equipment = ''
             print('no result')
         self.line = None
+        #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.equipment, fill="blue", font=("Courier", 12))
+
 
     def capture_service_in(self, cropped_image):
         # Perform actions for capturing service in
@@ -715,6 +722,8 @@ class ImageViewerApp:
             self.service_in = merge_common_substrings(self.service_in, just_text)
 
         self.equipment = None
+        #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.service_in, fill="blue", font=("Courier", 12))
+
 
     def capture_service_out(self, cropped_image):
         # Perform actions for capturing service out
@@ -732,6 +741,8 @@ class ImageViewerApp:
             self.service_out = merge_common_substrings(self.service_out, just_text)
 
         self.equipment = None
+        #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.service_out, fill="blue", font=("Courier", 12))
+
 
     def update_data_display(self):
         self.data_text.delete('1.0', tk.END)  # Clear the text box
