@@ -1,0 +1,60 @@
+lets start with an image
+load the image to a canvas
+lets predfine the window as 1200x900
+scale the image to fit the canvas
+let the user draw boxes to capture regions
+perform object detection and instrument recognition on captured regions
+identify if button is pressed append to xlwings document
+have a title bar that displays the mode
+have keys that switch modes
+enter can write group
+
+
+so this is the ideal workflow
+screen opens with blank canvas and a open file button
+load an pdf/image/folder
+first page is rendered on canvas
+begin mode shows capture PID (P)
+capture instrument group (I)
+user draws a box on a region containing some instruments
+consol prints instruments and inst numbers captured
+user presses L to switch to line capture. draws box and ocr is performed to capture line
+I is pressed to get service in
+O is pressed to get service out *optionally E is pressed to get equipment
+consol prints ready to write
+pressing enter appends rows to sheet
+
+after all are captured user presses N for next which opens up the next image
+
+
+at the core we load an image and blit it to the screen
+we have a top bar with buttons: capture pid, instrument group, line, service out, service in,
+ equipment, write to xlwings
+
+prompt sequence
+write me a tkinter app that can load an image from a folder and display it scaled to 1200x900 maintaining aspect ratio.
+the top bar is where the user can open the folder containing the images.
+there will be a next button to load the next image
+
+make it so the user draw boxes on the image that crop and save the image.
+make it so we have a write to xlsx button to write the contents of the ocr to the xlwings document
+
+TODO
+OPEN WINDOW NEXT TCO
+CORRECTION FUNCTION
+RIGHT CLICK TO REMOVE BOX
+SERVICES WITH NO LINE AND EQUIP CONFLICT
+LEFT CLICKING NO WHERE DUPLICATES INSTRUMENTS
+MAKE DPI POP UP IN CENTER
+ZOOM WINDOW SNIP
+INSTRUMENT BLACKLIST
+configuration: inst scaling, reader settings, blacklist
+refactor release box
+set minscore inst
+
+THICK LINE FOR CURRENT BOX
+ZOOM
+RIGHT CLICK DELETE BOX
+REMEMBER OCR BOX LEFT CLICK
+ONLY INST
+start window full screen

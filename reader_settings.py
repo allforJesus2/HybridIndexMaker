@@ -67,6 +67,7 @@ class SetReaderSettings:
 
         self.link_threshold = Scale(controls_frame, from_=0, to=1, orient=HORIZONTAL, resolution=0.01, length=400,
                                     label='Link Threshold', command=self.update_image)
+
         self.link_threshold.set(self.reader_settings["link_threshold"])
         self.link_threshold.pack(fill=tk.X)
 

@@ -1,73 +1,4 @@
-'''
-lets start with an image
-load the image to a canvas
-lets predfine the window as 1200x900
-scale the image to fit the canvas
-let the user draw boxes to capture regions
-perform object detection and instrument recognition on captured regions
-identify if button is pressed append to xlwings document
-have a title bar that displays the mode
-have keys that switch modes
-enter can write group
 
-
-so this is the ideal workflow
-screen opens with blank canvas and a open file button
-load an pdf/image/folder
-first page is rendered on canvas
-begin mode shows capture PID (P)
-capture instrument group (I)
-user draws a box on a region containing some instruments
-consol prints instruments and inst numbers captured
-user presses L to switch to line capture. draws box and ocr is performed to capture line
-I is pressed to get service in
-O is pressed to get service out *optionally E is pressed to get equipment
-consol prints ready to write
-pressing enter appends rows to sheet
-
-after all are captured user presses N for next which opens up the next image
-
-
-at the core we load an image and blit it to the screen
-we have a top bar with buttons: capture pid, instrument group, line, service out, service in,
- equipment, write to xlwings
-
-prompt sequence
-write me a tkinter app that can load an image from a folder and display it scaled to 1200x900 maintaining aspect ratio.
-the top bar is where the user can open the folder containing the images.
-there will be a next button to load the next image
-
-make it so the user draw boxes on the image that crop and save the image.
-make it so we have a write to xlsx button to write the contents of the ocr to the xlwings document
-
-TODO
-OPEN WINDOW NEXT TCO
-CORRECTION FUNCTION
-RIGHT CLICK TO REMOVE BOX
-SERVICES WITH NO LINE AND EQUIP CONFLICT
-LEFT CLICKING NO WHERE DUPLICATES INSTRUMENTS
-MAKE DPI POP UP IN CENTER
-ZOOM WINDOW SNIP
-CLEARER TEXT
-BIGGER TEXT FOR MODE
-ONLY USE CV2
-INSTRUMENT BLACKLIST
-OCR WHITELIST
-configuration: inst scaling, reader settings, blacklist
-refactor release box
-set minscore inst
-
-THICK LINE FOR CURRENT BOX
-ZOOM
-RIGHT CLICK DELETE BOX
-REMEMBER OCR BOX LEFT CLICK
-ONLY INST
-start window full screen
-
-fix git
-
-OTHER READER SETTINGS
-'''
 # pip install tkinter PIL xlwings detecto easyocr opencv-python numpy matplotlib torch PyMuPDF
 from functions import *
 import tkinter as tk
@@ -193,31 +124,49 @@ class ImageViewerApp:
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
 
         # Create a commands menu
-        self.commands_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.commands_menu.add_command(label="Next", command=self.next_image)
-        self.commands_menu.add_command(label="Previous", command=self.previous_image)
-        self.commands_menu.add_command(label="Capture PID", command=lambda: self.set_capture('pid'))
-        self.commands_menu.add_command(label="Capture Instrument Group", command=lambda: self.set_capture('instruments'))
-        self.commands_menu.add_command(label="Capture Line", command=lambda: self.set_capture('line'))
-        self.commands_menu.add_command(label="Capture Equipment", command=lambda: self.set_capture('equipment'))
-        self.commands_menu.add_command(label="Capture Service In", command=lambda: self.set_capture('service_in'))
-        self.commands_menu.add_command(label="Capture Service Out", command=lambda: self.set_capture('service_out'))
-        self.commands_menu.add_command(label="Capture comment", command=lambda: self.set_capture('comment'))
+        self.command_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.command_menu.add_command(label="Create images from PDF", command=self.open_pdf2png)
+        self.command_menu.add_command(label="Load Object detection model", command=self.load_model)
+        self.command_menu.add_command(label="Merge pdfs", command=self.merge_pdfs)
+        #self.command_menu.add_command(label="Set comment", command=self.set_comment)
+        self.command_menu.add_command(label="Swap services", command=self.swap_services)
+        #self.command_menu.add_command(label="Clear boxes", command=self.clear_boxes)
+        self.command_menu.add_command(label="Clear instrument group", command=self.clear_instrument_group)
+        self.command_menu.add_command(label="Load a Tag Correction Function", command=self.load_correct_fn)
+        self.command_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
+        self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
 
-        self.commands_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
-        self.commands_menu.add_command(label="Clear instrument group", command=self.clear_instrument_group)
-        self.commands_menu.add_command(label="Go to Page", command=self.open_go_to_page)
-        self.commands_menu.add_command(label="Create images from PDF", command=self.open_pdf2png)
-        self.commands_menu.add_command(label="Clear boxes", command=self.clear_boxes)
-        self.commands_menu.add_command(label="Load Tag Correction Function", command=self.load_correct_fn)
-        self.commands_menu.add_command(label="Load Object detection model", command=self.load_model)
-        self.commands_menu.add_command(label="Merge pdfs", command=self.merge_pdfs)
-        self.commands_menu.add_command(label="Set comment", command=self.set_comment)
-        self.commands_menu.add_command(label="Swap services", command=self.swap_services)
-        self.commands_menu.add_command(label="Open instrument reader settings", command=self.open_instrument_reader_settings)
-        self.commands_menu.add_command(label="Save Settings", command=self.save_attributes)
-        self.commands_menu.add_command(label="Open general reader settings", command=self.open_general_reader_settings)
-        self.menu_bar.add_cascade(label="Commands", menu=self.commands_menu)
+        # Create a capture menu
+        self.capture_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.capture_menu.add_command(label="Capture PID", command=lambda: self.set_capture('pid'))
+        self.capture_menu.add_command(label="Capture Instrument Group", command=lambda: self.set_capture('instruments'))
+        self.capture_menu.add_command(label="Capture Line", command=lambda: self.set_capture('line'))
+        self.capture_menu.add_command(label="Capture Equipment", command=lambda: self.set_capture('equipment'))
+        self.capture_menu.add_command(label="Capture Service In", command=lambda: self.set_capture('service_in'))
+        self.capture_menu.add_command(label="Capture Service Out", command=lambda: self.set_capture('service_out'))
+        self.capture_menu.add_command(label="Capture comment", command=lambda: self.set_capture('comment'))
+        self.menu_bar.add_cascade(label="Capture", menu=self.capture_menu)
+
+
+
+
+        self.page_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.page_menu.add_command(label="Next", command=self.next_image)
+        self.page_menu.add_command(label="Previous", command=self.previous_image)
+        self.page_menu.add_command(label="Go to Page", command=self.open_go_to_page)
+        self.menu_bar.add_cascade(label="Page", menu=self.page_menu)
+
+        self.settings_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.settings_menu.add_command(label="Open instrument reader settings", command=self.open_instrument_reader_settings)
+        self.settings_menu.add_command(label="Open general reader settings", command=self.open_general_reader_settings)
+        self.settings_menu.add_command(label="Save Settings", command=self.save_attributes)
+        self.menu_bar.add_cascade(label="Settings", menu=self.settings_menu)
+
+
+        # Create a Help menu
+        self.help_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.help_menu.add_command(label="Keybindings", command=self.show_keybindings)
+        self.menu_bar.add_cascade(label="Help", menu=self.help_menu)
 
         self.root.config(menu=self.menu_bar)
         self.capture='pid'
@@ -282,6 +231,23 @@ class ImageViewerApp:
         self.canvas.bind('<B1-Motion>', self.draw_box)
         self.canvas.bind('<ButtonRelease-1>', self.end_drawing)
 
+    def show_keybindings(self):
+        keybindings = """
+        n/N: Next image
+        b/B: Previous image
+        p/P: Capture PID
+        a/A: Capture Instrument Group
+        f/F: Capture Line
+        e/E: Capture Equipment
+        z/Z: Capture Service In
+        x/X: Capture Service Out
+        w/W: Append Data to Excel
+        c/C: Clear Instrument Group
+        v/V: Vote to normalize tag numbers
+        s/S: Swap Services
+        g/G: Set Comment
+        """
+        tk.messagebox.showinfo("Keybindings", keybindings)
     def save_attributes(self):
         """Save class attributes to a JSON file"""
         attributes_to_save = [
@@ -609,14 +575,6 @@ class ImageViewerApp:
 
             self.current_box = self.canvas.create_rectangle(x1, y1, x2, y2, outline='orange')
 
-            # Calculate the center coordinates of the box
-            #center_x = (x1 + x2) // 2
-            #center_y = (y1 + y2) // 2
-
-            # Draw the text above the box
-            #self.current_text = self.canvas.create_text(x1, y1 - 10, text=self.capture,
-            #                                            font=('Helvetica', 8, 'bold'),
-            #                                            justify='left', fill='orange')
 
     def end_drawing(self, event):
         if self.mouse_pressed:
@@ -679,7 +637,7 @@ class ImageViewerApp:
         # Perform actions for capturing line
         result = self.reader.readtext(cropped_image, **self.reader_settings)
         if result:
-            self.comment = result[0][1]
+            self.comment =  ' '.join([box[1] for box in result])
         else:
             self.comment =''
 
@@ -727,15 +685,8 @@ class ImageViewerApp:
         # Perform actions for capturing line
         result = self.reader.readtext(cropped_image, **self.reader_settings)
         if result[0][1]:
-            self.line = result[0][1]
-            #x1, y1, x2, y2 = self.canvas.coords(self.current_box)
-            #self.persistent_boxes.append(self.current_box)
-
-            #self.current_text = self.canvas.create_text(x1, y1 - 10, text=self.line,
-            #                                            font=('Helvetica', 8, 'bold'),
-            #                                            justify='left', fill='orange')
-
-
+            #self.line = result[0][1]
+            self.line = ' '.join([box[1] for box in result])
         else:
             print('no result')
         self.equipment = None
