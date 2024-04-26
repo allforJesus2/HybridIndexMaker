@@ -104,7 +104,7 @@ class ImageViewerApp:
         self.minscore_inst = 0.7
         self.inst_data = []
         self.active_inst_box_count = 0
-
+        self.show_line = False
 
         # Create a menu bar
         self.menu_bar = tk.Menu(self.root)
@@ -123,6 +123,8 @@ class ImageViewerApp:
         self.command_menu.add_command(label="Clear instrument group", command=self.clear_instrument_group)
         self.command_menu.add_command(label="Load a Tag Correction Function", command=self.load_correct_fn)
         self.command_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
+        self.command_menu.add_command(label="Toggle show line text", command=self.toggle_show_line_text)
+
         self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
 
         # Create a capture menu
@@ -228,6 +230,8 @@ class ImageViewerApp:
         self.canvas.bind('<Button-1>', self.start_drawing)
         self.canvas.bind('<B1-Motion>', self.draw_box)
         self.canvas.bind('<ButtonRelease-1>', self.end_drawing)
+    def toggle_show_line_text(self):
+        self.show_line = not self.show_line
 
     def show_keybindings(self):
         keybindings = """
@@ -397,8 +401,8 @@ class ImageViewerApp:
             self.image_list = [os.path.join(self.folder_path, f) for f in os.listdir(self.folder_path) if f.endswith(('.png', '.jpg', '.jpeg', '.gif'))]
             self.current_image_index = 0
             self.load_attributes()
+            self.go_to_page(self.current_image_index)
 
-            self.load_image()
 
     def append_data_to_excel(self):
 
@@ -566,7 +570,8 @@ class ImageViewerApp:
         if self.mouse_pressed:
             if self.current_box and self.current_box not in self.persistent_boxes:
                 self.canvas.delete(self.current_box)  # Remove the previous box
-                self.canvas.delete(self.current_text)  # Remove the previous text
+                if self.current_text:
+                    self.canvas.delete(self.current_text)  # Remove the previous text
                 # we do it here so we can view the last line capture
             x1, y1 = self.start_x, self.start_y
             x2, y2 = event.x, event.y
@@ -690,7 +695,8 @@ class ImageViewerApp:
         else:
             print('no result')
         self.equipment = None
-        self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.line, fill="blue", font=("Courier", 12))
+        if self.show_line:
+            self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.line, fill="blue", font=("Courier", 12))
 
 
     def capture_equipment(self, cropped_image):
@@ -744,17 +750,19 @@ class ImageViewerApp:
         #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.service_out, fill="blue", font=("Courier", 12))
 
 
+
     def update_data_display(self):
+
         self.data_text.delete('1.0', tk.END)  # Clear the text box
+
         self.data_text.insert(tk.END, f"PID: {self.pid}\n")
         self.data_text.insert(tk.END, f"Page: {self.current_image_index + 1} of {len(self.image_list)}\n")
-        self.data_text.insert(tk.END, f"Line: {self.line}\n")
-        self.data_text.insert(tk.END, f"Service In: {self.service_in}\n")
-        self.data_text.insert(tk.END, f"Service Out: {self.service_out}\n")
-        self.data_text.insert(tk.END, f"Equipment: {self.equipment}\n")
-        self.data_text.insert(tk.END, f"Comment: {self.comment}\n")
-
-        self.data_text.insert(tk.END, f"Instrument Data:\n")
+        self.data_text.insert(tk.END, f"Line: {self.line}\n\n")
+        self.data_text.insert(tk.END, f"Service In: {self.service_in}\n\n")
+        self.data_text.insert(tk.END, f"Service Out: {self.service_out}\n\n")
+        self.data_text.insert(tk.END, f"Equipment:{self.equipment}\n\n")
+        self.data_text.insert(tk.END, f"Comment: {self.comment}\n\n")
+        self.data_text.insert(tk.END, f"Instrument Data:\n\n")
         for data in self.inst_data:
             self.data_text.insert(tk.END, f"{data['label']}\t{data['tag']}\t{data['tag_no']}\n")
 
