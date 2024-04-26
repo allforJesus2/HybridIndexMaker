@@ -256,7 +256,9 @@ class ImageViewerApp:
             'pid_coords',
             'current_image_index',
             'instrument_reader_settings',
-            'model_inst_path'
+            'reader_settings',
+            'show_line',
+            'model_inst_path',
             # Add any other attribute names you want to save here
         ]
 
@@ -284,10 +286,12 @@ class ImageViewerApp:
 
     def set_instrument_reader_settings(self, rs):
         self.instrument_reader_settings = rs
+        self.save_attributes()
         print('instrument reader settings: ', rs)
 
     def set_reader_settings(self, rs):
         self.reader_settings = rs
+        self.save_attributes()
         print('reader settings: ', rs)
 
     def open_instrument_reader_settings(self):
