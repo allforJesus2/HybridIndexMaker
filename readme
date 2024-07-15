@@ -51,6 +51,8 @@ INSTRUMENT BLACKLIST
 configuration: inst scaling, reader settings, blacklist
 refactor release box
 set minscore inst
+write to csv
+
 
 THICK LINE FOR CURRENT BOX
 ZOOM

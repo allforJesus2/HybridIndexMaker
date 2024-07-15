@@ -3,7 +3,26 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 
+def HardOCR(image, reader, reader_settings,
+            sub_img_size=1300, stride=1250):
+    rs = reader_settings
 
+    current_time1 = time.time()
+    ocr_results = perform_ocr_on_subimages(image, reader, rs, sub_img_size=sub_img_size, stride=stride)
+    current_time2 = time.time()
+    print(f'time elapsed: {current_time2 - current_time1}')
+
+    current_time1 = time.time()
+    ocr_results_fixed = process_overlapping_boxes(image, ocr_results, reader)
+    current_time2 = time.time()
+    print(f'time elapsed: {current_time2 - current_time1}')
+
+    current_time1 = time.time()
+    ocr_results_fixed_rotated = correct_for_rotated_text2(image, ocr_results_fixed, reader, rs)
+    current_time2 = time.time()
+    print(f'time elapsed: {current_time2 - current_time1}')
+
+    return ocr_results_fixed_rotated
 def split_image(img, sub_img_size, stride):
     # Get the size of the input image
     h, w = img.shape[:2]
@@ -38,11 +57,8 @@ def perform_ocr_on_subimages(img, reader, rs,
     # Perform OCR on each sub-image using EasyOCR
     ocr_results = []
     for i, (sub_img, offset) in enumerate(zip(sub_images, offsets)):
-        print(f'performing ocr on image {i} of {len(sub_images)}')
-        sub_results = reader.readtext(sub_img, min_size=rs['min_size'], low_text=rs['low_text'],
-                                      link_threshold=rs['link_threshold'], text_threshold=rs['text_threshold'],
-                                      decoder=rs['decoder'], blocklist=rs['blocklist'], width_ths=rs['width_ths'],
-                                      add_margin=rs['add_margin'])
+        print('\r', f'performing ocr on image {i} of {len(sub_images)}', end='')
+        sub_results = reader.readtext(sub_img, **rs)
         # Adjust the box coordinates with the offset
         adjusted_results = []
         for result in sub_results:
@@ -184,7 +200,7 @@ def process_overlapping_boxes(img, ocr_results, reader):
     length = len(overlapping_groups)
     # Process each group of overlapping boxes
     for i, group in enumerate(overlapping_groups):
-        print(f'processing overlap group {i} of {length}')
+        print('\r', f'processing overlap group {i} of {length}',end='')
         # Extract ROI coordinates from the group of overlapping boxes
         roi_coords = extract_roi_from_group(group)
 
@@ -230,11 +246,7 @@ def correct_for_rotated_text2(img, results, reader, rs):
                 # here we want to rotate the text
                 rotated_img = cv2.rotate(crop_img, cv2.ROTATE_90_CLOCKWISE)
                 # re-read
-                sub_results = reader.readtext(rotated_img, min_size=rs['min_size'], low_text=rs['low_text'],
-                                              link_threshold=rs['link_threshold'], text_threshold=rs['text_threshold'],
-                                              decoder=rs['decoder'], blocklist=rs['blocklist'],
-                                              width_ths=rs['width_ths'],
-                                              add_margin=rs['add_margin'])
+                sub_results = reader.readtext(rotated_img, **rs)
                 # overwrite text
 
                 result_list[1] = sub_results[0][1]
@@ -245,23 +257,3 @@ def correct_for_rotated_text2(img, results, reader, rs):
     return corrected_results
 
 
-def HardOCR(image, reader, reader_settings,
-            sub_img_size=1300, stride=1250):
-    rs = reader_settings
-
-    current_time1 = time.time()
-    ocr_results = perform_ocr_on_subimages(image, reader, rs, sub_img_size=sub_img_size, stride=stride)
-    current_time2 = time.time()
-    print(f'time elapsed: {current_time2 - current_time1}')
-
-    current_time1 = time.time()
-    ocr_results_fixed = process_overlapping_boxes(image, ocr_results, reader)
-    current_time2 = time.time()
-    print(f'time elapsed: {current_time2 - current_time1}')
-
-    current_time1 = time.time()
-    ocr_results_fixed_rotated = correct_for_rotated_text2(image, ocr_results_fixed, reader, rs)
-    current_time2 = time.time()
-    print(f'time elapsed: {current_time2 - current_time1}')
-
-    return ocr_results_fixed_rotated
