@@ -150,9 +150,9 @@ class ImageViewerApp:
         self.command_menu.add_command(label="Silent/quick Write Mode", command=lambda: self.set_write_mode('openpyxl'))
         self.command_menu.add_command(label="Save workbook", command=self.save_workbook)
         self.command_menu.add_command(label="Auto Generate Index", command=self.auto_generate_index)
-        self.command_menu.add_command(label="Generate type xlsx", command=self.create_tag_type_xlsx)
-        self.command_menu.add_command(label="Generate type xlsx ai", command=self.create_tag_type_xlsx_ai)
-        self.command_menu.add_command(label="Generate type xlsx ai v2", command=self.create_tag_type_xlsx_ai_v2)
+        self.command_menu.add_command(label="Generate type xlsx via convolution", command=self.create_tag_type_xlsx)
+        #self.command_menu.add_command(label="Generate type xlsx ai", command=self.create_tag_type_xlsx_ai)
+        self.command_menu.add_command(label="Generate Instrument Count", command=self.create_tag_type_xlsx_ai_v2)
         self.command_menu.add_command(label="Generate Filename PID xlsx", command=self.make_pid_page_xlsx)
 
 
@@ -369,15 +369,17 @@ class ImageViewerApp:
                 counter += 1
 
     def create_tag_type_xlsx_ai_v2(self):
-        model_path = filedialog.askopenfilename(title="PTH Model file",filetypes=[('PTH File', '*.pth')])
-        labels = self.load_labels()
-        model = Model.load(model_path, labels)
+        print('Expecting labels: 3WAY, ARROW, BALL, BUTTERFLY, CHECK, CORIOLIS, DCS, DIAPHRAM, GATE, GLOBE, INST, KNIFE, MAGNETIC, ORIFICE, PLUG, SEAL, ULTRASONIC, VBALL')
+        #model_path = filedialog.askopenfilename(title="PTH Model file",filetypes=[('PTH File', '*.pth')])
+        #labels = self.load_labels()
+        #model = Model.load(model_path, labels)
 
+        include_dcs = tk.messagebox.askyesno("Question", "Do you want to include DCS?")
 
         image_folder = filedialog.askdirectory(title='Folder that has PNGs')
         radius = tk.simpledialog.askinteger("Expand Radius", "Enter radius expansion pixels for valves:", initialvalue=180)
-        minscore = tk.simpledialog.askinteger("Confidence", "Enter convolution confidence threshold:", initialvalue=80)/100
-        key_tag = 'INST'
+        minscore = tk.simpledialog.askinteger("Confidence", "Enter detecto confidence threshold:", initialvalue=80)/100
+        #key_tag = 'INST'
 
         tag_type_xlsx = openpyxl.Workbook()
         ws = tag_type_xlsx.create_sheet('tagtype')
@@ -402,15 +404,15 @@ class ImageViewerApp:
                 cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
                 self.capture_pid(cropped_image)
 
-            labels, boxes, scores = model_predict_on_mozaic(img, model)
+            labels, boxes, scores = model_predict_on_mozaic(img, self.model_inst)
 
 
-            results = (labels, boxes, scores)
+            results = zip(labels, boxes, scores)
 
 
             # data = {'tag': tag, 'tag_no': tag_no, 'label': label}
             data = return_inst_data2(results, img, self.reader, minscore, self.instrument_reader_settings,
-                                     radius=radius)
+                                     radius=radius, include_dcs=include_dcs)
             print(data)
             for inst in data:
                 row = [inst['tag'], inst['tag_no'], inst['label'], filename, self.pid if self.pid else ""]

@@ -254,7 +254,7 @@ def return_inst_data(prediction_data, img, clip, reader, minscore, correct_fn, r
     # tag, tag_no, label, line_id, xv_type, valve_type, size, inst_alarm
 
 
-def return_inst_data2(prediction_data, img, reader, minscore, rs, clip=0, radius=180):
+def return_inst_data2(prediction_data, img, reader, minscore, rs, clip=0, radius=180, include_dcs=False):
     all_data = []
     group_inst = []
     group_else = []
@@ -284,7 +284,7 @@ def return_inst_data2(prediction_data, img, reader, minscore, rs, clip=0, radius
     for label, box, score in group_inst:
         print('\r', f'checking {counter} of {gi_len} group_inst',end='')
         counter=+1
-        if label != 'DCS':
+        if label != 'DCS' or include_dcs:
             tag, tag_no = '', ''
             x_min, y_min, x_max, y_max = box.tolist()
             crop_img = img[int(y_min) + clip:int(y_max) - clip, int(x_min) + clip:int(x_max) - clip]
