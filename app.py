@@ -56,6 +56,7 @@ class ImageViewerApp:
             "allowlist": '',
             "decoder": 'beamsearch'
         }
+        self.ocr_results = None
 
         self.line = None
         self.service_in = None
@@ -71,7 +72,11 @@ class ImageViewerApp:
 
 
         self.image_list = []
+        self.image_path = None
         self.current_image_index = 0
+        self.original_image = None
+        self.cv2img = None
+
         self.mouse_pressed = False
         self.start_x = 0
         self.start_y = 0
@@ -89,6 +94,8 @@ class ImageViewerApp:
             'service_out': self.capture_service_out,
             'comment': self.capture_comment
         }
+
+        self.whole_page_ocr_results = None
 
         print('loading reader')
         self.reader = easyocr.Reader(['en'])
@@ -137,7 +144,7 @@ class ImageViewerApp:
         # Create a commands menu
         self.command_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.command_menu.add_command(label="Create images from PDF", command=self.open_pdf2png)
-        self.command_menu.add_command(label="Load Object detection model", command=self.load_model)
+        self.command_menu.add_command(label="Load Object detection model", command=self.load_pretrained_model)
         self.command_menu.add_command(label="Merge pdfs", command=self.merge_pdfs)
         #self.command_menu.add_command(label="Set comment", command=self.set_comment)
         self.command_menu.add_command(label="Swap services", command=self.swap_services)
@@ -154,6 +161,8 @@ class ImageViewerApp:
         #self.command_menu.add_command(label="Generate type xlsx ai", command=self.create_tag_type_xlsx_ai)
         self.command_menu.add_command(label="Generate Instrument Count", command=self.create_tag_type_xlsx_ai_v2)
         self.command_menu.add_command(label="Generate Filename PID xlsx", command=self.make_pid_page_xlsx)
+        self.command_menu.add_command(label="Test instrument Model", command=self.test_model_mosaic)
+        self.command_menu.add_command(label="Get OCR", command=self.get_ocr)
 
 
         self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
@@ -266,6 +275,56 @@ class ImageViewerApp:
         self.canvas.bind('<B1-Motion>', self.draw_box)
         self.canvas.bind('<ButtonRelease-1>', self.end_drawing)
 
+
+    def test_model_mosaic(self):
+        if self.model_inst is None:
+            tk.messagebox.showerror("Error", "Model not loaded. Load a pretrained model first.")
+            return
+        minscore = tk.simpledialog.askinteger("Scale percent", "Enter a minscore 1-100:", initialvalue=50)/100
+
+        # Ask for an image to test
+        image_path = filedialog.askopenfilename(title="Select an image for testing",
+                                                filetypes=(("PNG files", "*.png"), ("JPEG files", "*.jpg")))
+        if image_path:
+            image = cv2.imread(image_path)
+
+            labels, boxes, scores = model_predict_on_mozaic(image, self.model_inst)
+
+            # Overlay boxes and labels on the image
+            img_with_boxes = self.plot_pic(image, labels, boxes, scores, minscore=minscore)
+
+            # Save the image with overlaid boxes and labels
+            # temp_dir = tempfile.gettempdir()
+            output_image_path = "result_image.png"
+            cv2.imwrite(output_image_path, img_with_boxes)
+
+            # Open the saved image using the default image viewer
+            os.startfile(output_image_path)
+
+    def plot_pic(self, img, labels, boxes, scores, size=5, minscore=.3):
+        img = copy.copy(img)
+        # plot_pic(img,labels,boxes,scores)
+        # Define some colors for the boxes and labels
+
+        for label, box, score in zip(labels, boxes, scores):
+            if score > minscore:
+                # Extract the coordinates of the box
+                my_list = box
+                my_list = [int(x) for x in my_list]
+                x1, y1, x2, y2 = my_list
+
+                # Draw a rectangle around the box
+                cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), thickness=2)
+                # Add a label above the box
+                cv2.putText(img, label + ":0." + str(int(float(score * 1000))), (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                            .7,
+                            (255, 0, 0), thickness=2)
+
+        # Display the image with the boxes and labels overlayed using Matplotlib
+        # fig, ax = plt.subplots(figsize=(size, size))
+        # ax.imshow(img)
+        # plt.show()
+        return img
 
     def set_minscore(self):
         self.minscore_inst = tk.simpledialog.askfloat(prompt="Enter Object Minscore", title="Enter Object Minscore", initialvalue=self.minscore_inst)
@@ -384,15 +443,15 @@ class ImageViewerApp:
         tag_type_xlsx = openpyxl.Workbook()
         ws = tag_type_xlsx.create_sheet('tagtype')
         # Define the header row
-        header = ['TAG', 'TAG_NO', 'TYPE', 'PAGE', 'PID']
         # Write the header row to the first sheet of the workbook
-        ws.append(header)
 
         # Collect all.png and.jpg files, ignoring case
         image_files = [f for f in os.listdir(image_folder) if f.lower().endswith(('.png', '.jpg'))]
 
         # Sort the collected files
         image_files.sort()
+
+        header = None
 
         #for img in image_folder
         for filename in image_files:
@@ -415,7 +474,10 @@ class ImageViewerApp:
                                      radius=radius, include_dcs=include_dcs)
             print(data)
             for inst in data:
-                row = [inst['tag'], inst['tag_no'], inst['label'], filename, self.pid if self.pid else ""]
+                if header == None:
+                    header = [key for key in inst] + ['FILE', 'PID']
+                    ws.append(header)
+                row = [str(value) for value in inst.values()] + [filename, self.pid if self.pid else ""]
                 ws.append(row)
 
 
@@ -542,6 +604,25 @@ class ImageViewerApp:
 
         self.output_file_path = os.path.join(self.folder_path, 'page_' + str(self.current_image_index) + '.xlsx')
         output_file.save(self.output_file_path)
+
+    def get_ocr(self):
+        self.ocr_results = HardOCR(self.cv2img, self.reader, self.reader_settings)
+        img_ocr_results = plot_ocr_results(self.cv2img, self.ocr_results)
+
+        # save a pic
+        cv2.imwrite(os.path.join(self.results_folder, 'ocr_img.png'), img_ocr_results)
+
+        # save actual results
+        save_path = os.path.join(self.results_folder, 'ocr.pkl')
+        save_easyocr_results_pickle(self.ocr_results, filename=save_path)
+
+    def load_ocr(self):
+        file_name = os.path.join(self.results_folder, 'ocr.pkl')
+        try:
+            self.ocr_results = load_easyocr_results_pickle(filename=file_name)
+            print('ocr results loaded')
+        except:
+            print('error loading ocr results')
 
     def process_pid_image(self):
 
@@ -853,6 +934,20 @@ class ImageViewerApp:
         print('loading model')
         self.model_inst = Model.load(self.model_inst_path, self.labels)
 
+    def load_pretrained_model(self):
+        model_path = filedialog.askopenfilename(title="Select pretrained model file",filetypes=[("Model files", "*.pth")])
+        if model_path:
+            label_path = model_path.replace(".pth", ".txt")
+            if os.path.exists(label_path):
+                with open(label_path, "r") as f:
+                    self.labels = [x.strip() for x in f.read().split(",")]
+            else:
+                tk.messagebox.showinfo("Load error", f"{label_path} with comma separated labels not found")
+            print('make sure labels are loaded correctly')
+            self.model_inst = Model.load(model_path, self.labels)
+            tk.messagebox.showinfo("Model Loaded", "Pretrained model loaded successfully.")
+            #self.labels_entry.insert('1.0', ', '.join(self.labels))
+
     def open_go_to_page(self):
 
         page_index = tk.simpledialog.askinteger("Go to Page", "Enter the page index:")
@@ -1051,88 +1146,20 @@ class ImageViewerApp:
         self.inst_data = []
         self.update_data_display()
 
-    '''
-        def append_data_to_excel(self):
-    
-            try:
-                # Example data to append
-                file = 'index.xlsx'
-                workbook_path = os.path.join(self.folder_path, file)
-    
-                # Check if the file exists, if not, create a new workbook
-                if not os.path.exists(workbook_path):
-                    self.wb = xw.Book()  # Create a new workbook
-                    self.wb.save(workbook_path)  # Save the workbook to the specified path
-                    #self.wb.close()  # Close the workbook
-    
-                # Open the workbook (it will be opened in the background)
-                wb = xw.Book(workbook_path)
-                # Check if the 'Instrument Index' sheet exists, if not, create it
-                if 'Instrument Index' not in wb.sheet_names:
-                    wb.sheets.add(name='Instrument Index')
-    
-                    # Define the header row
-                    header = ['PID', 'TAG', 'TAG_NO', 'LABEL', 'LINE/EQUIP', 'SERVICE', 'COMMENT']
-    
-                    # Write the header row to the first sheet of the workbook
-                    sheet = wb.sheets['Instrument Index']
-                    for i, column_header in enumerate(header, start=1):
-                        sheet.range((1, i)).value = column_header
-    
-    
-                ws = wb.sheets['Instrument Index']
-                for data in self.inst_data:
-                    last_row = ws.range('A1').expand('down').last_cell.row
-                    ws.range(last_row+1, 1).value = self.pid
-                    ws.range(last_row + 1, 2).value = data['tag']
-                    ws.range(last_row + 1, 3).value = data['tag_no']
-                    ws.range(last_row + 1, 4).value = data['label']
-    
-                    if self.service_in and self.service_out:
-                        ws.range(last_row + 1, 6).value = self.service_in + ' TO ' + self.service_out
-                    elif self.service_in:
-                        ws.range(last_row + 1, 6).value = 'FROM ' + self.service_in
-                    elif self.service_out:
-                        ws.range(last_row + 1, 6).value = 'TO ' + self.service_out
-    
-                    if self.line:
-                        ws.range(last_row + 1, 5).value = self.line
-                    elif self.equipment:
-                        words = self.equipment.split(' ')
-                        ws.range(last_row + 1, 5).value = words[0]
-                        ws.range(last_row + 1, 6).value = ' '.join(words[1:])
-    
-                    if self.comment:
-                        ws.range(last_row + 1, 7).value = self.comment
-    
-                #self.persistent_boxes.append(self.current_box)
-    
-                # Slice the list to get the last 4 items
-                active_boxes = self.persistent_boxes[-self.active_inst_box_count:]
-    
-                # Iterate over the sliced list and change the outline color of each item
-                for box_id in active_boxes:
-                    self.canvas.itemconfig(box_id, outline='#87CEEB')
-    
-                self.active_inst_box_count = 0
-                #self.comment = ''
-    
-                #change last box color
-    
-                self.inst_data = []
-                self.update_data_display()
-    
-            except Exception as e:
-                tk.messagebox.showerror(e)
-                print(f"error {e}")
-    '''
     def set_comment(self):
         self.comment = tk.simpledialog.askstring("Input", "Please enter a Comment:")
 
     def load_image(self):
         if self.image_list:
-            image_path = self.image_list[self.current_image_index]
-            self.original_image = Image.open(image_path)
+
+            self.image_path = self.image_list[self.current_image_index]
+            name, ext = os.path.splitext(self.image_path)
+            self.results_folder = name + "_results"
+            if not os.path.exists(self.results_folder):
+                os.makedirs(self.results_folder)
+
+            self.original_image = Image.open(self.image_path)
+            self.cv2img = pil_to_cv2(self.original_image)
             width, height = self.original_image.size
 
             # Get the canvas dimensions
@@ -1167,6 +1194,7 @@ class ImageViewerApp:
             self.scale_y = height / scaled_height
 
             self.create_capture_text()
+            self.load_ocr()
 
     def create_capture_text(self):
         # Remove the previous capture text if it exists

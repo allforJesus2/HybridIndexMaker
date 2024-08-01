@@ -11,6 +11,8 @@ from scipy.spatial import cKDTree
 import re
 import hashlib
 import time
+import json
+import pickle
 
 def pil_to_cv2(pil_image):
     """
@@ -253,6 +255,75 @@ def return_inst_data(prediction_data, img, clip, reader, minscore, correct_fn, r
     return all_data
     # tag, tag_no, label, line_id, xv_type, valve_type, size, inst_alarm
 
+def return_inst_data3(prediction_data, img, reader, minscore, rs, clip=0, radius=180, include_dcs=False,
+                      threshold=0.5, erosion=10):
+    # here we use flood filling
+    all_data = []
+    group_inst = []
+    group_else = []
+    got_one = False
+
+    # Separate the groups and extract centers
+    centers_else = []
+    for label, box, score in prediction_data:
+        if score < minscore:
+            continue
+        if label in ['INST', 'DCS']:
+            group_inst.append((label, box, score))
+        elif label != 'ARROW':
+            x_min, y_min, x_max, y_max = box.tolist()
+            center = [(x_min + x_max) / 2, (y_min + y_max) / 2]
+            centers_else.append(center)
+            group_else.append((label, box, score))
+
+    # Create KD-Tree if we have any 'else' objects
+    if centers_else:
+        tree = cKDTree(np.array(centers_else))
+    else:
+        tree = None
+
+    gi_len = len(group_inst)
+    counter=0
+    for label, box, score in group_inst:
+        print('\r', f'checking {counter} of {gi_len} group_inst',end='')
+        counter=+1
+        if label != 'DCS' or include_dcs:
+            tag, tag_no = '', ''
+            x_min, y_min, x_max, y_max = box.tolist()
+            crop_img = img[int(y_min) + clip:int(y_max) - clip, int(x_min) + clip:int(x_max) - clip]
+            try:
+                results = reader.readtext(crop_img, **rs)
+            except Exception as e:
+                print('error', e)
+                continue
+
+            if results:
+                if not got_one:
+                    filename = 'instrument_capture.png'
+                    cv2.imwrite(filename, crop_img)
+                    got_one = True
+
+                tag = results[0][1]
+                tag_no = ' '.join([box[1] for box in results[1:]])
+
+            # Find the closest object using KD-Tree if it exists
+            closest_obj = None
+            if tree is not None:
+                center = np.array([(x_min + x_max) / 2, (y_min + y_max) / 2])
+                distance, index = tree.query(center, k=1, distance_upper_bound=radius)
+
+                if distance <= radius:
+                    closest_obj = group_else[index][0]
+
+            if closest_obj is not None:
+                inst_type = closest_obj
+            else:
+                inst_type = ''
+
+            data = {'tag': tag, 'tag_no': tag_no, 'box':box, 'label': label, 'type':inst_type}
+            all_data.append(data)
+    print("")
+    return all_data
 
 def return_inst_data2(prediction_data, img, reader, minscore, rs, clip=0, radius=180, include_dcs=False):
     all_data = []
@@ -1035,3 +1106,15 @@ def point_in_box(x, y, box):
     if xmin <= x <= xmax and ymin <= y <= ymax:
         return True
     return False
+
+def save_easyocr_results_pickle(results, filename='easyocr_results.pkl'):
+    with open(filename, 'wb') as f:
+        pickle.dump(results, f)
+
+def load_easyocr_results_pickle(filename='easyocr_results.pkl'):
+    try:
+        with open(filename, 'rb') as f:
+            return pickle.load(f)
+    except FileNotFoundError:
+        print("File not found.")
+        return []
