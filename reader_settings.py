@@ -96,6 +96,12 @@ class SetReaderSettings:
         self.add_margin.set(self.reader_settings["add_margin"])
         self.add_margin.pack(fill=tk.X)
 
+        # New Scale Widget for Scale Factor
+        self.scale_factor = Scale(controls_frame, from_=0.1, to=5, orient=HORIZONTAL, resolution=0.1, length=400,
+                                  label='Scale Factor', command=self.update_image)
+        self.scale_factor.set(1.0)  # Initialize with the current mag_ratio
+        self.scale_factor.pack(fill=tk.X)
+
         # Create a frame for the image
         image_frame = tk.Frame(root)
         image_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -128,8 +134,81 @@ class SetReaderSettings:
             }
             self.callback(self.reader_settings)
 
-    def update_image(self, event=None):
+    def update_image2(self, event=None):
         results = self.reader.readtext(self.imgpath, detail=1,
+                                       text_threshold=self.text_threshold.get(),
+                                       low_text=self.low_text.get(),
+                                       link_threshold=self.link_threshold.get(),
+                                       min_size=int(self.min_size.get()),
+                                       ycenter_ths=self.ycenter_ths.get(),
+                                       height_ths=self.height_ths.get(),
+                                       width_ths=self.width_ths.get(),
+                                       add_margin=self.add_margin.get(),
+                                       mag_ratio=self.mag_ratio.get(),
+                                       allowlist=self.allowlist_entry.get(),
+                                       decoder=self.decoder_entry.get(),
+                                       rotation_info=[270])
+
+        img = cv2.imread(self.imgpath)
+        scale_factor = 1  # Set the desired scale factor here
+        scaled_img = cv2.resize(img, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_AREA)
+
+        final_results = []
+
+        for item in results:
+            box, text, score = item
+            if score < 0.3:
+                x1, y1, x2, y2 = [int(coord) for coord in (box[0][0], box[0][1], box[2][0], box[2][1])]
+                cropped_img = img[y1:y2, x1:x2]
+                rotated_img = cv2.rotate(cropped_img, cv2.ROTATE_90_CLOCKWISE)
+
+                rotated_results = self.reader.readtext(rotated_img, detail=1,
+                                                       text_threshold=self.text_threshold.get(),
+                                                       low_text=self.low_text.get(),
+                                                       link_threshold=self.link_threshold.get(),
+                                                       min_size=int(self.min_size.get()),
+                                                       ycenter_ths=self.ycenter_ths.get(),
+                                                       height_ths=self.height_ths.get(),
+                                                       width_ths=self.width_ths.get(),
+                                                       add_margin=self.add_margin.get(),
+                                                       mag_ratio=self.mag_ratio.get(),
+                                                       allowlist=self.allowlist_entry.get(),
+                                                       decoder=self.decoder_entry.get(),
+                                                       rotation_info=None)
+
+                for rotated_item in rotated_results:
+                    rotated_box, rotated_text, rotated_score = rotated_item
+                    rotated_x1, rotated_y1, rotated_x2, rotated_y2 = [int(coord) for coord in (
+                    rotated_box[0][0], rotated_box[0][1], rotated_box[2][0], rotated_box[2][1])]
+
+                    # Adjust the coordinates back to the original image
+                    new_x1 = x1 + rotated_y1
+                    new_y1 = y1 + (x2 - x1) - rotated_x2
+                    new_x2 = x1 + rotated_y2
+                    new_y2 = y1 + (x2 - x1) - rotated_x1
+
+                    final_results.append(
+                        [[[new_x1, new_y1], [new_x2, new_y1], [new_x2, new_y2], [new_x1, new_y2]], rotated_text,
+                         rotated_score])
+            else:
+                final_results.append(item)
+
+        for item in final_results:
+            box, text, score = item
+            x1, y1, x2, y2 = [int(coord) * scale_factor for coord in (box[0][0], box[0][1], box[2][0], box[2][1])]
+            cv2.rectangle(scaled_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(scaled_img, text, (x1, y1 - 10), cv2.FONT_HERSHEY_COMPLEX, 0.5, (0, 0, 255), 1)
+            cv2.putText(scaled_img, str(score), (x1, y1 + 10), cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 0, 0), 1)
+
+        scaled_img = cv2.cvtColor(scaled_img, cv2.COLOR_BGR2RGB)
+        scaled_img = Image.fromarray(scaled_img)
+
+        scaled_img = ImageTk.PhotoImage(scaled_img)
+        self.image_label.config(image=scaled_img)
+        self.image_label.image = scaled_img
+
+    def update_image(self, event=None):
+        results = (self.reader.readtext(self.imgpath, detail=1,
                                         text_threshold=self.text_threshold.get(),
                                         low_text=self.low_text.get(),
                                         link_threshold=self.link_threshold.get(),
@@ -140,18 +219,19 @@ class SetReaderSettings:
                                         add_margin=self.add_margin.get(),
                                        mag_ratio=self.mag_ratio.get(),
                                        allowlist=self.allowlist_entry.get(),
-                                        decoder=self.decoder_entry.get())
-
+                                        decoder=self.decoder_entry.get(),
+                                        rotation_info=None))
         img = cv2.imread(self.imgpath)
-        scale_factor = 3  # Set the desired scale factor here
+        scale_factor = float(self.scale_factor.get())
         scaled_img = cv2.resize(img, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_AREA)
 
-        for result in results:
-            box = result[0]
-            text = result[1]
-            x1, y1, x2, y2 = [int(coord) * scale_factor for coord in (box[0][0], box[0][1], box[2][0], box[2][1])]
+        for item in results:
+            box, text, score = item
+            x1, y1, x2, y2 = [int(coord * scale_factor) for coord in (box[0][0], box[0][1], box[2][0], box[2][1])]
             cv2.rectangle(scaled_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(scaled_img, text, (x1, y1 - 10), cv2.FONT_HERSHEY_COMPLEX, 0.5, (0, 0, 255), 1)
+            cv2.putText(scaled_img, str(score), (x1, y1 + 10), cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 0, 0), 1)
+
 
         scaled_img = cv2.cvtColor(scaled_img, cv2.COLOR_BGR2RGB)
         scaled_img = Image.fromarray(scaled_img)
@@ -159,3 +239,6 @@ class SetReaderSettings:
         scaled_img = ImageTk.PhotoImage(scaled_img)
         self.image_label.config(image=scaled_img)
         self.image_label.image = scaled_img
+
+
+

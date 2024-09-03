@@ -215,183 +215,97 @@ def overlap(box1, box2):
     overlap_ratio = intersection_area / union_area
 
     return overlap_ratio
-def return_inst_data(prediction_data, img, clip, reader, minscore, correct_fn, rs):
-    all_data = []
-    got_one = False
-    for label, box, score in prediction_data:
-        if (label == 'INST' or label == 'DCS') and score > minscore:
-            tag, tag_no = '', ''
-            x_min, y_min, x_max, y_max = box.tolist()
-            crop_img = img[int(y_min) + clip:int(y_max) - clip, int(x_min) + clip:int(x_max) - clip]
-            try:
-                results = reader.readtext(crop_img, **rs)
-            except Exception as e:
-                print('error',e)
-                continue
-
-            if results:
-
-                if got_one == False:
-                    #SAVE LITTLE BOX
-                    filename = 'instrument_capture.png'
-                    cv2.imwrite(filename, crop_img)
-                    got_one = True
-
-                if correct_fn:
-                    print('doing correct')
-                    result_text = ' '.join([result[1] for result in results])
-                    tag, tag_no = correct_fn(result_text)
-                else:
-                    tag = results[0][1]
-                    tag_no = ' '.join([box[1] for box in results[1:]])
-            else:
-                continue
 
 
-
-
-            data = {'tag':tag, 'tag_no':tag_no, 'label':label}
-            all_data.append(data)
-    return all_data
-    # tag, tag_no, label, line_id, xv_type, valve_type, size, inst_alarm
-
-def return_inst_data3(prediction_data, img, reader, minscore, rs, clip=0, radius=180, include_dcs=False,
-                      threshold=0.5, erosion=10):
-    # here we use flood filling
+def return_inst_data2(prediction_data, img, reader, rs, clip=0, radius=180,
+                      inst_labels=None,
+                      other_labels=None,
+                      min_scores=None,
+                      return_pic=False,
+                      offset=None, ocr_results=None, comment_box_expand=30):
+    #print('instrument labels ', inst_labels)
+    #print('other labels ', other_labels)
     all_data = []
     group_inst = []
-    group_else = []
+    group_other = []
     got_one = False
 
     # Separate the groups and extract centers
-    centers_else = []
     for label, box, score in prediction_data:
-        if score < minscore:
+        if score < min_scores[label]:
             continue
-        if label in ['INST', 'DCS']:
+        if label in inst_labels:
             group_inst.append((label, box, score))
-        elif label != 'ARROW':
-            x_min, y_min, x_max, y_max = box.tolist()
-            center = [(x_min + x_max) / 2, (y_min + y_max) / 2]
-            centers_else.append(center)
-            group_else.append((label, box, score))
+        if label in other_labels:
+            group_other.append((label, box, score))
 
-    # Create KD-Tree if we have any 'else' objects
-    if centers_else:
-        tree = cKDTree(np.array(centers_else))
-    else:
-        tree = None
 
-    gi_len = len(group_inst)
-    counter=0
     for label, box, score in group_inst:
-        print('\r', f'checking {counter} of {gi_len} group_inst',end='')
-        counter=+1
-        if label != 'DCS' or include_dcs:
-            tag, tag_no = '', ''
-            x_min, y_min, x_max, y_max = box.tolist()
-            crop_img = img[int(y_min) + clip:int(y_max) - clip, int(x_min) + clip:int(x_max) - clip]
-            try:
-                results = reader.readtext(crop_img, **rs)
-            except Exception as e:
-                print('error', e)
-                continue
 
-            if results:
-                if not got_one:
-                    filename = 'instrument_capture.png'
-                    cv2.imwrite(filename, crop_img)
-                    got_one = True
+        tag, tag_no = '', ''
+        x_min, y_min, x_max, y_max = box.tolist()
+        inst_center = calculate_center(box)
 
-                tag = results[0][1]
-                tag_no = ' '.join([box[1] for box in results[1:]])
+        crop_img = img[int(y_min) + clip:int(y_max) - clip, int(x_min) + clip:int(x_max) - clip]
+        try:
+            results = reader.readtext(crop_img, **rs)
+        except Exception as e:
+            print('error', e)
+            continue
 
-            # Find the closest object using KD-Tree if it exists
-            closest_obj = None
-            if tree is not None:
-                center = np.array([(x_min + x_max) / 2, (y_min + y_max) / 2])
-                distance, index = tree.query(center, k=1, distance_upper_bound=radius)
+        if results:
+            if not got_one:
+                filename = 'instrument_capture.png'
+                cv2.imwrite(filename, crop_img)
+                got_one = True
 
-                if distance <= radius:
-                    closest_obj = group_else[index][0]
+            tag = results[0][1]
+            tag_no = ' '.join([box[1] for box in results[1:]])
 
-            if closest_obj is not None:
-                inst_type = closest_obj
-            else:
-                inst_type = ''
+        # define inst_type as the closest item in group_other that DOES NOT have the same label
+        inst_type = find_closest_other(inst_center, group_other, label, radius)
 
-            data = {'tag': tag, 'tag_no': tag_no, 'box':box, 'label': label, 'type':inst_type}
-            all_data.append(data)
-    print("")
+        comment = ''
+        offset_tensor = torch.tensor([offset[0], offset[1], offset[0], offset[1]])
+        offset_box = box + offset_tensor
+        if ocr_results:
+            comment = get_comment(ocr_results, offset_box, comment_box_expand)
+        data = {'tag': tag, 'tag_no': tag_no, 'score': score, 'box': box, 'label': label, 'type': inst_type,
+                'comment': comment, 'image': crop_img if return_pic else ''}
+        all_data.append(data)
+
     return all_data
 
-def return_inst_data2(prediction_data, img, reader, minscore, rs, clip=0, radius=180, include_dcs=False):
-    all_data = []
-    group_inst = []
-    group_else = []
-    got_one = False
 
-    # Separate the groups and extract centers
-    centers_else = []
-    for label, box, score in prediction_data:
-        if score < minscore:
+def find_closest_other(inst_center, group_other, current_label, radius):
+    """Find the closest item in group_other that doesn't have the same label."""
+    min_distance = radius#float('inf')
+    closest_label = None
+    for label, box, score in group_other:
+        # Skip items with the same label as the current instrument
+        if label == current_label:
             continue
-        if label in ['INST', 'DCS']:
-            group_inst.append((label, box, score))
-        elif label != 'ARROW':
-            x_min, y_min, x_max, y_max = box.tolist()
-            center = [(x_min + x_max) / 2, (y_min + y_max) / 2]
-            centers_else.append(center)
-            group_else.append((label, box, score))
 
-    # Create KD-Tree if we have any 'else' objects
-    if centers_else:
-        tree = cKDTree(np.array(centers_else))
-    else:
-        tree = None
+        other_center = calculate_center(box)
+        distance = calculate_distance(inst_center, other_center)
+        if distance < min_distance:
+            min_distance = distance
+            closest_label = label
+    return closest_label
 
-    gi_len = len(group_inst)
-    counter=0
-    for label, box, score in group_inst:
-        print('\r', f'checking {counter} of {gi_len} group_inst',end='')
-        counter=+1
-        if label != 'DCS' or include_dcs:
-            tag, tag_no = '', ''
-            x_min, y_min, x_max, y_max = box.tolist()
-            crop_img = img[int(y_min) + clip:int(y_max) - clip, int(x_min) + clip:int(x_max) - clip]
-            try:
-                results = reader.readtext(crop_img, **rs)
-            except Exception as e:
-                print('error', e)
-                continue
 
-            if results:
-                if not got_one:
-                    filename = 'instrument_capture.png'
-                    cv2.imwrite(filename, crop_img)
-                    got_one = True
+def calculate_center(box):
+    """Calculate the center of a box."""
+    x_min, y_min, x_max, y_max = box.tolist()
+    center_x = (x_min + x_max) / 2
+    center_y = (y_min + y_max) / 2
+    return np.array([center_x, center_y])
 
-                tag = results[0][1]
-                tag_no = ' '.join([box[1] for box in results[1:]])
 
-            # Find the closest object using KD-Tree if it exists
-            closest_obj = None
-            if tree is not None:
-                center = np.array([(x_min + x_max) / 2, (y_min + y_max) / 2])
-                distance, index = tree.query(center, k=1, distance_upper_bound=radius)
+def calculate_distance(center1, center2):
+    """Calculate the Euclidean distance between two centers."""
+    return np.linalg.norm(center1 - center2)
 
-                if distance <= radius:
-                    closest_obj = group_else[index][0]
-
-            if closest_obj is not None:
-                inst_type = closest_obj
-            else:
-                inst_type = ''
-
-            data = {'tag': tag, 'tag_no': tag_no, 'box':box, 'label': label, 'type':inst_type}
-            all_data.append(data)
-    print("")
-    return all_data
 
 #functions relevant to auto generate index
 def plot_ocr_results(img, results):
@@ -436,28 +350,56 @@ def plot_pic(img, labels, boxes, scores, size=5, minscore=.5):
     return img
 
 def get_comment(ocr_results, dbox, box_expand, include_inside=False, remove_pattern='^$'):
-    # box_expand = 20
     # dbox is a detecto box
     # obox is an easyOCR box
     comment = ''
+    object_box = dbox.tolist()
+    object_box = [int(x) for x in object_box]
 
 
     for item in ocr_results:
         #we cant do for obox, word, score in ocr because ocr_results changes lenght i.e. color or a word is appened
-        obox, word = item[0], item[1]
+        obox, word, confidence = item
+
 
         text_box = [obox[0][0], obox[0][1], obox[2][0], obox[2][1]]
-        object_box = dbox.tolist()
-        #OL = overlap_percentage(text_box, object_box)
-        # if OL > 0 and OL < 50:
+
         if overlap_bbox(text_box, object_box, box_expand, include_inside):
-            # print(f'overlap = {OL}')
-            #if not re.match(remove_pattern, word):
-            comment = (comment if comment else '') + ('~' if comment else '') + word
-
-
-
+            comment += f" {word}"
     return comment
+
+
+def overlap_bbox2(obox, dbox, extension, include_inside):
+    # Extract coordinates
+    x1_min, y1_min, x1_max, y1_max = obox
+    x2_min, y2_min, x2_max, y2_max = dbox
+
+    # Extend box2 by the given extension
+    x2_min_ext = max(x2_min - extension, 0)
+    y2_min_ext = max(y2_min - extension, 0)
+    x2_max_ext = x2_max + extension
+    y2_max_ext = y2_max + extension
+
+    print(f"Text box: [{x1_min}, {y1_min}, {x1_max}, {y1_max}]")
+    print(f"Object box: [{x2_min}, {y2_min}, {x2_max}, {y2_max}]")
+    print(f"Extended object box: [{x2_min_ext}, {y2_min_ext}, {x2_max_ext}, {y2_max_ext}]")
+
+    # Check for overlap
+    overlap = (x1_min <= x2_max_ext and x1_max >= x2_min_ext and
+               y1_min <= y2_max_ext and y1_max >= y2_min_ext)
+
+    print(f"Overlap detected: {overlap}")
+
+    if include_inside:
+        return overlap
+    else:
+        # Check if text box is completely inside the un-extended object box
+        inside = (x2_min <= x1_min and x2_max >= x1_max and
+                  y2_min <= y1_min and y2_max >= y1_max)
+        print(f"Text completely inside object box: {inside}")
+        return overlap and not inside
+
+    return False
 
 def overlap_bbox(obox, dbox, extension, include_inside):
     #this fn works as follows
@@ -1118,3 +1060,96 @@ def load_easyocr_results_pickle(filename='easyocr_results.pkl'):
     except FileNotFoundError:
         print("File not found.")
         return []
+
+
+import tkinter as tk
+from tkinter import Listbox
+
+import tkinter as tk
+from tkinter import Listbox
+
+def update_groups(labels, group_inst, group_other, root, callback=None):
+    # Create a new window
+    window = tk.Toplevel(root)
+
+    # Create a frame for the labels listbox and buttons
+    frame_labels = tk.Frame(window)
+    frame_labels.pack(side=tk.LEFT, padx=10)
+
+    # Create a listbox for the labels
+    listbox_labels = Listbox(frame_labels)
+    for item in labels:
+        if item not in group_inst and item not in group_other:
+            listbox_labels.insert(tk.END, item)
+    listbox_labels.pack()
+
+    # Function to move selected item from labels to group_inst
+    def move_to_inst():
+        selected = listbox_labels.get(tk.ACTIVE)
+        listbox_inst.insert(tk.END, selected)
+        listbox_labels.delete(tk.ACTIVE)
+
+    # Function to move selected item from labels to group_other
+    def move_to_other():
+        selected = listbox_labels.get(tk.ACTIVE)
+        listbox_other.insert(tk.END, selected)
+        listbox_labels.delete(tk.ACTIVE)
+
+    # Buttons to move items
+    button_inst = tk.Button(frame_labels, text="Move to Group Inst", command=move_to_inst)
+    button_other = tk.Button(frame_labels, text="Move to Group Other", command=move_to_other)
+    button_inst.pack()
+    button_other.pack()
+
+    # Create a frame for the group listboxes
+    frame_groups = tk.Frame(window)
+    frame_groups.pack(side=tk.LEFT, padx=10)
+
+    # Create two listboxes for the groups
+    listbox_inst = Listbox(frame_groups)
+    listbox_other = Listbox(frame_groups)
+
+    # Populate the listboxes with the current groups
+    for item in group_inst:
+        listbox_inst.insert(tk.END, item)
+    for item in group_other:
+        listbox_other.insert(tk.END, item)
+
+    listbox_inst.pack()
+    listbox_other.pack()
+
+    # Function to remove selected item from group_inst
+    def remove_from_inst():
+        selected = listbox_inst.get(tk.ACTIVE)
+        listbox_labels.insert(tk.END, selected)
+        listbox_inst.delete(tk.ACTIVE)
+
+
+
+    # Function to remove selected item from group_other and move it back to labels
+    def remove_from_other():
+        selected = listbox_other.get(tk.ACTIVE)
+        listbox_labels.insert(tk.END, selected)
+        listbox_other.delete(tk.ACTIVE)
+
+    # Buttons to remove items
+    button_remove_inst = tk.Button(frame_groups, text="Remove from Group Inst", command=remove_from_inst)
+    button_remove_other = tk.Button(frame_groups, text="Remove from Group Other", command=remove_from_other)
+    button_remove_inst.pack()
+    button_remove_other.pack()
+
+    # Function to close the window and update the groups
+    def save_close_window():
+        nonlocal group_inst, group_other
+        group_inst = list(listbox_inst.get(0, tk.END))
+        group_other = list(listbox_other.get(0, tk.END))
+        if callback:
+            callback(group_inst, group_other)
+        window.destroy()
+
+    # Button to close the window
+    button_close = tk.Button(window, text="Save and Close", command=save_close_window)
+    button_close.pack()
+
+    # Start the main loop
+    window.mainloop()

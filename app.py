@@ -2,7 +2,7 @@
 # pip install tkinter PIL xlwings detecto easyocr opencv-python numpy matplotlib torch PyMuPDF
 from functions import *
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, ttk
 from PIL import Image, ImageTk
 import os
 import xlwings as xw
@@ -18,12 +18,88 @@ from easyocr_mosaic import *
 from convolutioner import ConvolutionReplacer
 import xml.etree.ElementTree as ET
 import re
+from openpyxl.drawing.image import Image as xlImage
+from openpyxl.worksheet.hyperlink import Hyperlink
+from minscore_edit import SliderApp
+from find_an_instrument import FindAnInstrumentApp
+from console_redirect import *
+import io
+
+
+class AutoScrollbar(ttk.Scrollbar):
+    ''' A scrollbar that hides itself if it's not needed.
+        Works only if you use the grid geometry manager '''
+
+    def set(self, lo, hi):
+        if float(lo) <= 0.0 and float(hi) >= 1.0:
+            self.grid_remove()
+        else:
+            self.grid()
+            ttk.Scrollbar.set(self, lo, hi)
+
+    def pack(self, **kw):
+        raise tk.TclError('Cannot use pack with this widget')
+
+    def place(self, **kw):
+        raise tk.TclError('Cannot use place with this widget')
 
 class ImageViewerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Image Viewer")
         root.wm_state('zoomed')
+
+        # set up console redirects
+        self.console_popup = ConsolePopup(self.root)
+
+
+
+        # Vertical and horizontal scrollbars for canvas
+        vbar = AutoScrollbar(self.root, orient='vertical')
+        hbar = AutoScrollbar(self.root, orient='horizontal')
+        vbar.grid(row=0, column=1, sticky='ns')
+        hbar.grid(row=1, column=0, sticky='we')
+
+        # Create canvas and put image on it
+        self.canvas = tk.Canvas(self.root, highlightthickness=0,
+                                xscrollcommand=hbar.set, yscrollcommand=vbar.set)
+        self.canvas.grid(row=0, column=0, sticky='nswe')
+        self.canvas.update()  # wait till canvas is created
+        vbar.configure(command=self.scroll_y)  # bind scrollbars to the canvas
+        hbar.configure(command=self.scroll_x)
+
+        # Make the canvas expandable
+        self.root.rowconfigure(0, weight=1)
+        self.root.columnconfigure(0, weight=1)
+
+        # Bind events to the Canvas
+        self.canvas.bind('<Configure>', self.show_image)  # canvas is resized
+        self.canvas.bind('<ButtonPress-3>', self.move_from)
+        self.canvas.bind('<B3-Motion>', self.move_to)
+        self.canvas.bind('<MouseWheel>', self.wheel)  # with Windows and MacOS, but not Linux
+        self.canvas.bind('<Button-5>', self.wheel)  # only with Linux, wheel scroll down
+        self.canvas.bind('<Button-4>', self.wheel)  # only with Linux, wheel scroll up
+
+        # Initialize other attributes
+        self.image_list = []
+        self.image_path = None
+        self.current_image_index = 0
+        self.original_image = None
+        self.imscale = 1.0  # scale for the canvas image
+        self.delta = 1.3  # zoom magnitude
+
+
+
+        self.image_path = None
+        self.original_image = None
+        self.cv2img = None
+
+
+
+
+
+
+
         #reader settings
         # Initialize General OCR setting
 
@@ -57,6 +133,7 @@ class ImageViewerApp:
             "decoder": 'beamsearch'
         }
         self.ocr_results = None
+        self.comment_box_expand = 20
 
         self.line = None
         self.service_in = None
@@ -101,14 +178,19 @@ class ImageViewerApp:
         self.reader = easyocr.Reader(['en'])
         print('reader loaded')
 
-        labels = '3WAY, ARROW, BALL, BUTTERFLY, CHECK, CORIOLIS, DCS, DIAPHRAM, GATE, GLOBE, INST, KNIFE, MAGNETIC, ORIFICE, PLUG, SEAL, ULTRASONIC, VBALL'
-        self.labels = labels.split(', ')
-        self.model_inst_path = "models/arrows65.pth"
+        #labels = '3WAY, ARROW, BALL, BUTTERFLY, CHECK, CORIOLIS, DCS, DIAPHRAM, GATE, GLOBE, INST, KNIFE, MAGNETIC, ORIFICE, PLUG, SEAL, ULTRASONIC, VBALL'
+        self.labels = []
+        self.group_inst = []
+        self.group_other = []
+        self.min_scores = {}
+
+        self.model_inst_path = "models/turbine.pth"
         self.model_equipment_path = "models/equipment_services_v2.pth"
         try:
             # load instrument recognition model
             print('loading model')
-            self.model_inst = Model.load(self.model_inst_path, self.labels)
+            #self.model_inst = Model.load(self.model_inst_path, self.labels)
+            self.load_pretrained_model(self.model_inst_path)
             print('model loaded')
         except Exception as e:
             print('Error',e)
@@ -126,7 +208,7 @@ class ImageViewerApp:
             print('Error',e)
             print('load model failed. you will likely have to load the model from command')
 
-
+        self.association_radius = 33
         self.minscore_inst = 0.74
         self.inst_data = []
         self.active_inst_box_count = 0
@@ -159,10 +241,16 @@ class ImageViewerApp:
         self.command_menu.add_command(label="Auto Generate Index", command=self.auto_generate_index)
         self.command_menu.add_command(label="Generate type xlsx via convolution", command=self.create_tag_type_xlsx)
         #self.command_menu.add_command(label="Generate type xlsx ai", command=self.create_tag_type_xlsx_ai)
-        self.command_menu.add_command(label="Generate Instrument Count", command=self.create_tag_type_xlsx_ai_v2)
+        self.command_menu.add_command(label="Generate Instrument Count", command=self.generate_instrument_count)
+        self.command_menu.add_command(label="Generate Single Page Instrument Count", command=self.one_instrument_count)
+
         self.command_menu.add_command(label="Generate Filename PID xlsx", command=self.make_pid_page_xlsx)
         self.command_menu.add_command(label="Test instrument Model", command=self.test_model_mosaic)
         self.command_menu.add_command(label="Get OCR", command=self.get_ocr)
+        self.command_menu.add_command(label="Get all pages OCR", command=self.get_all_ocr)
+        self.command_menu.add_command(label="Find an instrument App", command=self.open_FAIA)
+        self.command_menu.add_command(label="Open Console Popup", command=self.open_console)
+
 
 
         self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
@@ -176,7 +264,9 @@ class ImageViewerApp:
         self.capture_menu.add_command(label="Capture Service In", command=lambda: self.set_capture('service_in'))
         self.capture_menu.add_command(label="Capture Service Out", command=lambda: self.set_capture('service_out'))
         self.capture_menu.add_command(label="Capture comment", command=lambda: self.set_capture('comment'))
+
         self.menu_bar.add_cascade(label="Capture", menu=self.capture_menu)
+
 
         # Create page menu
         self.page_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -191,6 +281,10 @@ class ImageViewerApp:
         self.settings_menu.add_command(label="Open general reader settings", command=self.open_general_reader_settings)
         self.settings_menu.add_command(label="Save Settings", command=self.save_attributes)
         self.settings_menu.add_command(label="Set min score for instruments", command=self.set_minscore)
+        self.settings_menu.add_command(label="Set instrument comment box expand", command=self.set_comment_box_expand)
+        self.settings_menu.add_command(label="Set association radius", command=self.set_association_radius)
+        self.settings_menu.add_command(label="Set instrument groups", command=self.catergorize_labels)
+        self.settings_menu.add_command(label="Set object min scores", command=self.set_object_scores)
 
         self.menu_bar.add_cascade(label="Settings", menu=self.settings_menu)
 
@@ -205,12 +299,16 @@ class ImageViewerApp:
         self.capture='pid'
         self.pid_coords = None
 
-        # Create a canvas to display the image
-        self.canvas = tk.Canvas(self.root, width=1200, height=900)
-        self.canvas.pack()
+
+
+
+
+
+
         # Create a separate window for displaying captured data
         self.data_window = tk.Toplevel(self.root)
         self.data_window.title("Captured Data")
+
 
         # Get the screen width and height
         screen_width = self.root.winfo_screenwidth()
@@ -270,11 +368,326 @@ class ImageViewerApp:
         self.root.bind('<KeyPress-Shift_L>', self.shift_pressed)
         self.root.bind('<KeyRelease-Shift_L>', self.shift_released)
 
-        # Bind mouse events for cropping
-        self.canvas.bind('<Button-1>', self.start_drawing)
-        self.canvas.bind('<B1-Motion>', self.draw_box)
-        self.canvas.bind('<ButtonRelease-1>', self.end_drawing)
 
+
+
+
+        self.canvas.bind('<ButtonPress-1>', self.start_crop)
+        self.canvas.bind('<B1-Motion>', self.update_crop)
+        self.canvas.bind('<ButtonRelease-1>', self.end_crop)
+
+        # Bind mouse events for cropping
+        #self.canvas.bind('<Button-1>', self.start_drawing)
+        #self.canvas.bind('<B1-Motion>', self.draw_box)
+        #self.canvas.bind('<ButtonRelease-1>', self.end_drawing)
+
+        self.crop_start = None
+        self.crop_end = None
+        self.crop_rectangle = None
+
+        self.mouse_pressed = False
+        self.start_x = 0
+        self.start_y = 0
+
+
+    #image scrolling and zooming
+
+    def scroll_y(self, *args, **kwargs):
+        ''' Scroll canvas vertically and redraw the image '''
+        self.canvas.yview(*args, **kwargs)  # scroll vertically
+        self.show_image()  # redraw the image
+
+    def scroll_x(self, *args, **kwargs):
+        ''' Scroll canvas horizontally and redraw the image '''
+        self.canvas.xview(*args, **kwargs)  # scroll horizontally
+        self.show_image()  # redraw the image
+
+    def move_from(self, event):
+        ''' Remember previous coordinates for scrolling with the mouse '''
+        self.canvas.scan_mark(event.x, event.y)
+
+    def move_to(self, event):
+        ''' Drag (move) canvas to the new position '''
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
+        self.show_image()  # redraw the image
+
+    def wheel(self, event):
+        ''' Zoom with mouse wheel '''
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        bbox = self.canvas.bbox(self.container)  # get image area
+        if bbox[0] < x < bbox[2] and bbox[1] < y < bbox[3]:
+            pass  # Ok! Inside the image
+        else:
+            return  # zoom only inside image area
+        scale = 1.0
+        # Respond to Linux (event.num) or Windows (event.delta) wheel event
+        if event.num == 5 or event.delta == -120:  # scroll down
+            i = min(self.width, self.height)
+            if int(i * self.imscale) < 30: return  # image is less than 30 pixels
+            self.imscale /= self.delta
+            scale /= self.delta
+        if event.num == 4 or event.delta == 120:  # scroll up
+            i = min(self.canvas.winfo_width(), self.canvas.winfo_height())
+            if i < self.imscale: return  # 1 pixel is bigger than the visible area
+            self.imscale *= self.delta
+            scale *= self.delta
+        self.canvas.scale('all', x, y, scale, scale)  # rescale all canvas objects
+        # print('scale',scale)
+        self.show_image()
+
+    def show_image(self, event=None):
+        print('self.imscale', self.imscale)
+        # Get the current horizontal and vertical offsets
+        x_offset = self.canvas.xview()[0]
+        y_offset = self.canvas.yview()[0]
+
+        # Print the offsets (you can adjust the formatting as needed)
+        print(f"Horizontal Offset: {x_offset}, Vertical Offset: {y_offset}")
+        ''' Show image on the Canvas '''
+        bbox1 = self.canvas.bbox(self.container)  # get image area
+        # Remove 1 pixel shift at the sides of the bbox1
+        bbox1 = (bbox1[0] + 1, bbox1[1] + 1, bbox1[2] - 1, bbox1[3] - 1)
+        bbox2 = (self.canvas.canvasx(0),  # get visible area of the canvas
+                 self.canvas.canvasy(0),
+                 self.canvas.canvasx(self.canvas.winfo_width()),
+                 self.canvas.canvasy(self.canvas.winfo_height()))
+        bbox = [min(bbox1[0], bbox2[0]), min(bbox1[1], bbox2[1]),  # get scroll region box
+                max(bbox1[2], bbox2[2]), max(bbox1[3], bbox2[3])]
+        if bbox[0] == bbox2[0] and bbox[2] == bbox2[2]:  # whole image in the visible area
+            bbox[0] = bbox1[0]
+            bbox[2] = bbox1[2]
+        if bbox[1] == bbox2[1] and bbox[3] == bbox2[3]:  # whole image in the visible area
+            bbox[1] = bbox1[1]
+            bbox[3] = bbox1[3]
+        self.canvas.configure(scrollregion=bbox)  # set scroll region
+        x1 = max(bbox2[0] - bbox1[0], 0)  # get coordinates (x1,y1,x2,y2) of the image tile
+        y1 = max(bbox2[1] - bbox1[1], 0)
+        x2 = min(bbox2[2], bbox1[2]) - bbox1[0]
+        y2 = min(bbox2[3], bbox1[3]) - bbox1[1]
+        if int(x2 - x1) > 0 and int(y2 - y1) > 0:  # show image if it in the visible area
+            x = min(int(x2 / self.imscale), self.width)  # sometimes it is larger on 1 pixel...
+            y = min(int(y2 / self.imscale), self.height)  # ...and sometimes not
+            image = self.original_image.crop((int(x1 / self.imscale), int(y1 / self.imscale), x, y))
+            imagetk = ImageTk.PhotoImage(image.resize((int(x2 - x1), int(y2 - y1))))
+            imageid = self.canvas.create_image(max(bbox2[0], bbox1[0]), max(bbox2[1], bbox1[1]),
+                                               anchor='nw', image=imagetk)
+            self.canvas.lower(imageid)  # set image into background
+            self.canvas.imagetk = imagetk  # keep an extra reference to prevent garbage-collection
+
+        # After creating the image on the canvas, bring the crop rectangle to the front if it exists
+        if self.crop_rectangle:
+            self.canvas.tag_raise(self.crop_rectangle)
+
+    def load_image(self):
+        if self.image_list:
+
+            self.image_path = self.image_list[self.current_image_index]
+            print(self.image_path)
+            name, ext = os.path.splitext(self.image_path)
+            self.results_folder = name + "_results"
+            if not os.path.exists(self.results_folder):
+                os.makedirs(self.results_folder)
+
+            self.original_image = Image.open(self.image_path)
+            self.cv2img = pil_to_cv2(self.original_image)
+
+            self.load_ocr()
+
+            self.width, self.height = self.original_image.size
+
+            # Put image into container rectangle and use it to set proper coordinates to the image
+            self.container = self.canvas.create_rectangle(0, 0, self.width, self.height, width=0)
+
+
+            # Get the current window size
+            window_width = self.canvas.winfo_width()
+            window_height = self.canvas.winfo_height()
+
+            # Calculate the scaling factor
+            width_ratio = window_width / self.width
+            height_ratio = window_height / self.height
+            scale_factor = min(width_ratio, height_ratio)
+
+            # Calculate new dimensions
+            new_width = int(self.width * scale_factor)
+            new_height = int(self.height * scale_factor)
+
+            # Clear the previous image from the canvas
+            self.canvas.delete("all")
+
+            # Set the initial scale
+            self.imscale = scale_factor
+
+            # Update the scroll region
+            self.canvas.config(scrollregion=(0, 0, new_width, new_height))
+
+            # Create a new image container
+            self.container = self.canvas.create_rectangle(0, 0, new_width, new_height, width=0)
+
+            # Show the image
+            self.show_image()
+
+            # Center the image
+            self.center_image()
+
+            self.create_capture_text()
+
+    def center_image(self):
+        # Get the current window size
+        window_width = self.canvas.winfo_width()
+        window_height = self.canvas.winfo_height()
+
+        # Get the current image size
+        bbox = self.canvas.bbox(self.container)
+        image_width = bbox[2] - bbox[0]
+        image_height = bbox[3] - bbox[1]
+
+        # Calculate offsets
+        offset_x = (window_width - image_width) / 2
+        offset_y = (window_height - image_height) / 2
+
+        # Move the image
+        self.canvas.move(self.container, offset_x, offset_y)
+        self.show_image()
+
+    def start_crop(self, event):
+        self.crop_start = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
+        if self.crop_rectangle and self.crop_rectangle not in self.persistent_boxes:
+            self.canvas.delete(self.crop_rectangle)
+
+    def update_crop(self, event):
+        if self.crop_start:
+            x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+            if self.crop_rectangle and self.crop_rectangle not in self.persistent_boxes:
+                self.canvas.delete(self.crop_rectangle)
+            self.crop_rectangle = self.canvas.create_rectangle(self.crop_start[0], self.crop_start[1], x, y,
+                                                               outline='orange')
+
+    def end_crop(self, event):
+        if self.crop_start:
+            self.crop_end = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
+            self.perform_crop()
+
+    def perform_crop(self):
+        if self.crop_start and self.crop_end:
+            # Convert canvas coordinates to image coordinates
+            x1, y1 = self.canvas_to_image(self.crop_start[0], self.crop_start[1])
+            x2, y2 = self.canvas_to_image(self.crop_end[0], self.crop_end[1])
+
+            # Ensure x1 < x2 and y1 < y2
+            x1, x2 = min(x1, x2), max(x1, x2)
+            y1, y2 = min(y1, y2), max(y1, y2)
+
+            self.cropped_x1 = x1
+            self.cropped_y1 = y1
+            self.cropped_x2 = x2
+            self.cropped_y2 = y2
+
+            # Crop the image
+            cropped_image = self.original_image.crop((x1, y1, x2, y2))
+            self.cropped_image = pil_to_cv2(cropped_image)
+            # Save or display the cropped image
+            cropped_image.save("ocr_capture.png")
+            print("Image cropped and saved as 'ocr_capture.png'")
+
+            # Perform the action based on self.capture
+            if self.capture in self.capture_actions:
+                self.capture_actions[self.capture](self.cropped_image)
+                self.update_data_display()
+            else:
+                print(f"Invalid capture action: {self.capture}")
+
+            # Clear the crop rectangle
+            if self.crop_rectangle not in self.persistent_boxes:
+                self.canvas.delete(self.crop_rectangle)
+            self.crop_start = None
+            self.crop_end = None
+
+    def end_drawing(self, event):
+        if self.mouse_pressed:
+            self.mouse_pressed = False
+            if self.current_box:
+
+                # Calculate the coordinates of the cropping box
+                x1, y1, x2, y2 = self.canvas.coords(self.current_box)
+                # Ensure the coordinates are in the correct order
+                x1, y1, x2, y2 = min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
+
+                # Apply the scaling factor to the cropping coordinates
+                self.cropped_x1 = int(x1 * self.scale_x)
+                self.cropped_y1 = int(y1 * self.scale_y)
+                self.cropped_x2 = int(x2 * self.scale_x)
+                self.cropped_y2 = int(y2 * self.scale_y)
+
+                # Crop the image using the scaled coordinates
+                cropped_image = self.original_image.crop((self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2))
+                self.cropped_image = pil_to_cv2(cropped_image)
+                filename = 'ocr_capture.png'
+                cv2.imwrite(filename, self.cropped_image)
+
+                # Perform the action based on self.capture
+                if self.capture in self.capture_actions:
+                    self.capture_actions[self.capture](self.cropped_image)
+                    self.update_data_display()
+                else:
+                    print(f"Invalid capture action: {self.capture}")
+
+            # We do this so that we dont click and re-extend the instrument group
+            if self.current_box not in self.persistent_boxes:
+                self.canvas.delete(self.current_box)
+            self.current_box = None
+
+    def canvas_to_image(self, canvas_x, canvas_y):
+        # Convert canvas coordinates to image coordinates
+        bbox = self.canvas.bbox(self.container)
+        image_x = int((canvas_x - bbox[0]) / self.imscale)
+        image_y = int((canvas_y - bbox[1]) / self.imscale)
+        return image_x, image_y
+
+
+    # end image scrolling and zooming
+
+    def start_drawing(self, event):
+        self.mouse_pressed = True
+        self.start_x = event.x
+        self.start_y = event.y
+
+    def draw_box(self, event):
+        if self.mouse_pressed:
+            if self.current_box and self.current_box not in self.persistent_boxes:
+                self.canvas.delete(self.current_box)  # Remove the previous box
+                if self.current_text:
+                    self.canvas.delete(self.current_text)  # Remove the previous text
+                # we do it here so we can view the last line capture
+            x1, y1 = self.start_x, self.start_y
+            x2, y2 = event.x, event.y
+
+            self.current_box = self.canvas.create_rectangle(x1, y1, x2, y2, outline='orange')
+
+
+    ###########
+
+
+    def open_console(self):
+        self.console_popup.create_console_popup()
+
+    def open_FAIA(self):
+        faia_window = tk.Toplevel(self.root)
+        FindAnInstrumentApp(faia_window, img_path=self.image_path)
+
+    def set_object_scores(self):
+        def set_minscores(score_dict):
+            self.min_scores = score_dict
+
+        slider_window = tk.Toplevel(self.root)
+
+        if not self.min_scores:
+            for label in self.labels:
+                self.min_scores[label] = self.minscore_inst
+
+
+        SliderApp(slider_window, self.min_scores, callback=set_minscores)
 
     def test_model_mosaic(self):
         if self.model_inst is None:
@@ -328,9 +741,11 @@ class ImageViewerApp:
 
     def set_minscore(self):
         self.minscore_inst = tk.simpledialog.askfloat(prompt="Enter Object Minscore", title="Enter Object Minscore", initialvalue=self.minscore_inst)
+    def set_comment_box_expand(self):
+        self.minscore_inst = tk.simpledialog.askinteger(prompt="Enter Comment Box Expand", title="Enter Comment Box Expand", initialvalue=self.comment_box_expand)
 
     def set_association_radius(self):
-        self.association_radius = tk.simpledialog.askfloat(prompt="Enter Object association radius", title="Enter association ( Radius", initialvalue=self.minscore_inst)
+        self.association_radius = tk.simpledialog.askfloat(prompt="Enter Object association radius", title="Enter association ( Radius", initialvalue=self.association_radius)
 
     def load_labels(self):
 
@@ -427,37 +842,30 @@ class ImageViewerApp:
                 print(f"Error saving file: {e}")
                 counter += 1
 
-    def create_tag_type_xlsx_ai_v2(self):
-        print('Expecting labels: 3WAY, ARROW, BALL, BUTTERFLY, CHECK, CORIOLIS, DCS, DIAPHRAM, GATE, GLOBE, INST, KNIFE, MAGNETIC, ORIFICE, PLUG, SEAL, ULTRASONIC, VBALL')
-        #model_path = filedialog.askopenfilename(title="PTH Model file",filetypes=[('PTH File', '*.pth')])
-        #labels = self.load_labels()
-        #model = Model.load(model_path, labels)
 
-        include_dcs = tk.messagebox.askyesno("Question", "Do you want to include DCS?")
+    def generate_instrument_count(self):
 
-        image_folder = filedialog.askdirectory(title='Folder that has PNGs')
-        radius = tk.simpledialog.askinteger("Expand Radius", "Enter radius expansion pixels for valves:", initialvalue=180)
-        minscore = tk.simpledialog.askinteger("Confidence", "Enter detecto confidence threshold:", initialvalue=80)/100
-        #key_tag = 'INST'
+        compiled_inst_count_xlsx = openpyxl.Workbook()
+        compiled_ws = compiled_inst_count_xlsx.active
+        compiled_ws.title = 'Instrument Count'
+        #compiled_header = None
 
-        tag_type_xlsx = openpyxl.Workbook()
-        ws = tag_type_xlsx.create_sheet('tagtype')
-        # Define the header row
-        # Write the header row to the first sheet of the workbook
+        self.current_image_index = 0
+        for i in range(len(self.image_list)):
 
-        # Collect all.png and.jpg files, ignoring case
-        image_files = [f for f in os.listdir(image_folder) if f.lower().endswith(('.png', '.jpg'))]
+            inst_count_xlsx = openpyxl.Workbook()
+            ws = inst_count_xlsx.active
+            ws.title = 'Instrument Count'
+            header = None
 
-        # Sort the collected files
-        image_files.sort()
 
-        header = None
+            self.load_image()
+            if self.ocr_results == None:
+                self.get_ocr()
+            self.current_image_index += 1
 
-        #for img in image_folder
-        for filename in image_files:
-            file_path = os.path.join(image_folder, filename)
-            img = cv2.imread(file_path)
-            print(filename)
+            img = self.cv2img
+
             if self.pid_coords:
                 self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
                 cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
@@ -465,39 +873,164 @@ class ImageViewerApp:
 
             labels, boxes, scores = model_predict_on_mozaic(img, self.model_inst)
 
-
             results = zip(labels, boxes, scores)
+            inst_img = plot_pic(img, labels, boxes, scores)
+            cv2.imwrite(os.path.join(self.results_folder, 'inst_img.png'), inst_img)
 
-
-            # data = {'tag': tag, 'tag_no': tag_no, 'label': label}
-            data = return_inst_data2(results, img, self.reader, minscore, self.instrument_reader_settings,
-                                     radius=radius, include_dcs=include_dcs)
-            print(data)
+            data = return_inst_data2(results, img, self.reader, self.instrument_reader_settings,
+                                     min_scores=self.min_scores,
+                                     inst_labels=self.group_inst, other_labels=self.group_other,
+                                     comment_box_expand=self.comment_box_expand,
+                                     ocr_results=self.ocr_results, offset=(0,0),
+                                     radius=self.association_radius)
+            #print(data)
+            row = 0
             for inst in data:
-                if header == None:
-                    header = [key for key in inst] + ['FILE', 'PID']
+
+
+                inst['pid'] = self.pid
+                inst['file'] = self.image_path
+
+                if row == 0:
+                    header = [key for key in inst]
                     ws.append(header)
-                row = [str(value) for value in inst.values()] + [filename, self.pid if self.pid else ""]
-                ws.append(row)
+                    compiled_ws.append(header)
+                    row += 1
+
+                for col, (key, value) in enumerate(inst.items(), start=1):
+                    for s in [ws, compiled_ws]:
+                        current_cell = s.cell(row=row, column=col)
+                        if key == 'image':
+                            # Convert cv2 image (BGR) to RGB
+                            img_rgb = cv2.cvtColor(value, cv2.COLOR_BGR2RGB)
+
+                            # Convert numpy array to PIL Image
+                            pil_img = Image.fromarray(img_rgb)
+                            # Save PIL Image to a bytes buffer
+                            img_byte_arr = io.BytesIO()
+                            pil_img.save(img_byte_arr, format='PNG')
+                            img_byte_arr = img_byte_arr.getvalue()
+
+                            # Create an openpyxl Image object
+                            excel_image = xlImage(io.BytesIO(img_byte_arr))
+                            # Add the image to the worksheet
+                            s.add_image(excel_image, current_cell.coordinate)
+                            pass
+                        elif key == 'file':
+                            current_cell.hyperlink = value
+                            current_cell.value = value
+                        elif key == 'box':
+
+                            # Converting the rounded tensor to a list
+                            rounded_list = value.tolist()
+                            int_list = [int(x) for x in rounded_list]
+
+                            current_cell.value = str(int_list)
+
+                        else:
+                            current_cell.value = str(value)
+
+                row += 1
 
 
+            # Save the Excel workbook to a file in the results folder
+            save_location = os.path.join(self.results_folder, "Instrument_Count.xlsx")
+            inst_count_xlsx.save(save_location)
+            print(f"File saved as: {save_location}")
 
-        counter = 1
-        while True:
-            try:
-                save_location = os.path.join(image_folder, f"tag_type{counter}.xlsx")
-                tag_type_xlsx.save(save_location)
-                print(f"File saved as: {save_location}")
-                break
-            except Exception as e:
-                print(f"Error saving file: {e}")
-                counter += 1
+        #NOW we compile all the xlsxs into one
+        save_location = os.path.join(self.folder_path, "Compiled_Instrument_Count.xlsx")
+        compiled_inst_count_xlsx.save(save_location)
+        print(f"File saved as: {save_location}")
+
+    def one_instrument_count(self):
+
+
+        inst_count_xlsx = openpyxl.Workbook()
+        ws = inst_count_xlsx.active
+        ws.title = 'Instrument Count'
+
+
+        if self.ocr_results == None:
+            self.get_ocr()
+
+        img = self.cv2img
+
+        if not self.pid and self.pid_coords:
+            self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
+            cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
+            self.capture_pid(cropped_image)
+
+        labels, boxes, scores = model_predict_on_mozaic(img, self.model_inst)
+
+        results = zip(labels, boxes, scores)
+        inst_img = plot_pic(img, labels, boxes, scores)
+        cv2.imwrite(os.path.join(self.results_folder, 'inst_img.png'), inst_img)
+
+        data = return_inst_data2(results, img, self.reader, self.instrument_reader_settings,
+                                 inst_labels=self.group_inst, other_labels=self.group_other,
+                                 min_scores=self.min_scores,
+                                 comment_box_expand=self.comment_box_expand,
+                                 ocr_results=self.ocr_results, offset=(0,0),
+                                 radius=self.association_radius)
+        #print(data)
+        row = 0
+        for inst in data:
+
+
+            inst['pid'] = self.pid
+            inst['file'] = self.image_path
+
+            if row == 0:
+                header = [key for key in inst]
+                ws.append(header)
+                row += 1
+
+            for col, (key, value) in enumerate(inst.items(), start=1):
+                for s in [ws]:
+                    current_cell = s.cell(row=row, column=col)
+                    if key == 'image' and value:
+                        # Convert cv2 image (BGR) to RGB
+                        img_rgb = cv2.cvtColor(value, cv2.COLOR_BGR2RGB)
+
+                        # Convert numpy array to PIL Image
+                        pil_img = Image.fromarray(img_rgb)
+                        # Save PIL Image to a bytes buffer
+                        img_byte_arr = io.BytesIO()
+                        pil_img.save(img_byte_arr, format='PNG')
+                        img_byte_arr = img_byte_arr.getvalue()
+
+                        # Create an openpyxl Image object
+                        excel_image = xlImage(io.BytesIO(img_byte_arr))
+                        # Add the image to the worksheet
+                        s.add_image(excel_image, current_cell.coordinate)
+                        pass
+                    elif key == 'file':
+                        current_cell.hyperlink = value
+                        current_cell.value = value
+                    elif key == 'box':
+
+                        # Converting the rounded tensor to a list
+                        rounded_list = value.tolist()
+                        int_list = [int(x) for x in rounded_list]
+
+                        current_cell.value = str(int_list)
+
+                    else:
+                        current_cell.value = str(value)
+
+            row += 1
+
+
+        # Save the Excel workbook to a file in the results folder
+        save_location = os.path.join(self.results_folder, "Instrument_Count.xlsx")
+        inst_count_xlsx.save(save_location)
+        print(f"File saved as: {save_location}")
+
+
 
     def make_pid_page_xlsx(self):
-        #for image in folder
-        #get pid
-        #get page
-        #write to xlsx
+
         pid_page_xlsx = openpyxl.Workbook()
         ws = pid_page_xlsx.create_sheet('pid_page')
         image_folder = filedialog.askdirectory(title='Folder that has PNGs')
@@ -616,13 +1149,22 @@ class ImageViewerApp:
         save_path = os.path.join(self.results_folder, 'ocr.pkl')
         save_easyocr_results_pickle(self.ocr_results, filename=save_path)
 
+    def get_all_ocr(self):
+        self.current_image_index = 0
+
+        for i in range(len(self.image_list)):
+            self.load_image()
+            self.get_ocr()
+            self.current_image_index += 1
+
     def load_ocr(self):
         file_name = os.path.join(self.results_folder, 'ocr.pkl')
         try:
             self.ocr_results = load_easyocr_results_pickle(filename=file_name)
             print('ocr results loaded')
         except:
-            print('error loading ocr results')
+            print('error loading ocr results. setting results to none')
+            self.ocr_results = None
 
     def process_pid_image(self):
 
@@ -641,7 +1183,7 @@ class ImageViewerApp:
         inst_data = return_inst_data2(inst_prediction_data, self.img, self.reader,
                                      self.minscore_inst, self.instrument_reader_settings)
 
-        print(inst_data)
+        print(len(inst_data), 'instruments captured')
         self.get_equipment_and_services()
         cv2.imwrite(os.path.join(self.results_folder, 'equipment_results_img.png'), self.equipment_results_img)
 
@@ -722,7 +1264,7 @@ class ImageViewerApp:
         if self.model_inst == None:
             # load instrument recognition model
             self.model_inst = Model.load(self.model_inst_path, self.labels)
-
+            self.load_model()
 
         #self.page_number = self.sorted_pages[0]
         # create a folder to save the result images to
@@ -828,6 +1370,12 @@ class ImageViewerApp:
             'reader_settings',
             'show_line',
             'model_inst_path',
+            'labels',
+            'group_inst',
+            'group_other',
+            'comment_box_expand',
+            'association_radius',
+            'min_scores'
             # Add any other attribute names you want to save here
         ]
 
@@ -901,8 +1449,9 @@ class ImageViewerApp:
         self.shift_held = False
     def update_capture_text(self, event):
         # Update the text's position to follow the cursor
-        x, y = event.x, event.y
-        self.canvas.coords(self.capture_text, x-16, y-8)
+        #x, y = event.x, event.y
+        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        self.canvas.coords(self.capture_text, x-8, y-8)
 
     def load_correct_fn(self):
         # Create a module specification
@@ -934,8 +1483,9 @@ class ImageViewerApp:
         print('loading model')
         self.model_inst = Model.load(self.model_inst_path, self.labels)
 
-    def load_pretrained_model(self):
-        model_path = filedialog.askopenfilename(title="Select pretrained model file",filetypes=[("Model files", "*.pth")])
+    def load_pretrained_model(self, model_path=None):
+        if model_path == None:
+            model_path = filedialog.askopenfilename(title="Select pretrained model file",filetypes=[("Model files", "*.pth")])
         if model_path:
             label_path = model_path.replace(".pth", ".txt")
             if os.path.exists(label_path):
@@ -945,7 +1495,8 @@ class ImageViewerApp:
                 tk.messagebox.showinfo("Load error", f"{label_path} with comma separated labels not found")
             print('make sure labels are loaded correctly')
             self.model_inst = Model.load(model_path, self.labels)
-            tk.messagebox.showinfo("Model Loaded", "Pretrained model loaded successfully.")
+            print("Pretrained model loaded successfully.")
+            #tk.messagebox.showinfo("Model Loaded", "Pretrained model loaded successfully.")
             #self.labels_entry.insert('1.0', ', '.join(self.labels))
 
     def open_go_to_page(self):
@@ -1025,9 +1576,9 @@ class ImageViewerApp:
         # Check if the 'Instrument Index' sheet exists, if not, create it
         if 'Instrument Index' not in wb.sheet_names:
             wb.sheets.add(name='Instrument Index')
-
+            self.inst_data
             # Define the header row
-            header = ['PID', 'TAG', 'TAG_NO', 'LABEL', 'TYPE', 'LINE/EQUIP', 'SERVICE', 'COMMENT']
+            header = ['PID', 'TAG', 'TAG_NO', 'LABEL', 'TYPE', 'LINE/EQUIP', 'SERVICE', 'COMMENT', 'USER NOTE']
 
             # Write the header row to the first sheet of the workbook
             sheet = wb.sheets['Instrument Index']
@@ -1062,9 +1613,10 @@ class ImageViewerApp:
                 ws.range(last_row + 1, 6).value = words[0]
                 ws.range(last_row + 1, 7).value = ' '.join(words[1:])
 
-            if self.comment:
-                ws.range(last_row + 1, 8).value = self.comment
+            ws.range(last_row + 1, 8).value = data['comment']
 
+            if self.comment:
+                ws.range(last_row + 1, 9).value = self.comment
         #self.persistent_boxes.append(self.current_box)
 
         self.turn_boxes_blue()
@@ -1149,52 +1701,6 @@ class ImageViewerApp:
     def set_comment(self):
         self.comment = tk.simpledialog.askstring("Input", "Please enter a Comment:")
 
-    def load_image(self):
-        if self.image_list:
-
-            self.image_path = self.image_list[self.current_image_index]
-            name, ext = os.path.splitext(self.image_path)
-            self.results_folder = name + "_results"
-            if not os.path.exists(self.results_folder):
-                os.makedirs(self.results_folder)
-
-            self.original_image = Image.open(self.image_path)
-            self.cv2img = pil_to_cv2(self.original_image)
-            width, height = self.original_image.size
-
-            # Get the canvas dimensions
-            canvas_width = self.canvas.winfo_width()
-            canvas_height = self.canvas.winfo_height()
-
-            # Resize the image to fit the canvas while maintaining aspect ratio
-            image_width, image_height = self.original_image.size
-            aspect_ratio = image_width / image_height
-
-            if aspect_ratio > canvas_width / canvas_height:
-                new_width = canvas_width
-                new_height = int(canvas_width / aspect_ratio)
-            else:
-                new_height = canvas_height
-                new_width = int(canvas_height * aspect_ratio)
-
-
-
-            self.scaled_image = self.original_image.resize((new_width, new_height))
-            self.photo = ImageTk.PhotoImage(self.scaled_image)
-
-            # Clear the previous image from the canvas
-            self.canvas.delete("image")
-            self.canvas.pack(fill=tk.BOTH, expand=True)
-
-            self.canvas.create_image(0, 0, image=self.photo, anchor='nw')
-
-            # Calculate the scaling factor for correct capturing
-            scaled_width, scaled_height = self.scaled_image.size
-            self.scale_x = width / scaled_width
-            self.scale_y = height / scaled_height
-
-            self.create_capture_text()
-            self.load_ocr()
 
     def create_capture_text(self):
         # Remove the previous capture text if it exists
@@ -1237,57 +1743,7 @@ class ImageViewerApp:
     def previous_image(self):
         self.go_to_page(self.current_image_index - 1)
 
-    def start_drawing(self, event):
-        self.mouse_pressed = True
-        self.start_x = event.x
-        self.start_y = event.y
 
-    def draw_box(self, event):
-        if self.mouse_pressed:
-            if self.current_box and self.current_box not in self.persistent_boxes:
-                self.canvas.delete(self.current_box)  # Remove the previous box
-                if self.current_text:
-                    self.canvas.delete(self.current_text)  # Remove the previous text
-                # we do it here so we can view the last line capture
-            x1, y1 = self.start_x, self.start_y
-            x2, y2 = event.x, event.y
-
-            self.current_box = self.canvas.create_rectangle(x1, y1, x2, y2, outline='orange')
-
-
-    def end_drawing(self, event):
-        if self.mouse_pressed:
-            self.mouse_pressed = False
-            if self.current_box:
-
-                # Calculate the coordinates of the cropping box
-                x1, y1, x2, y2 = self.canvas.coords(self.current_box)
-                # Ensure the coordinates are in the correct order
-                x1, y1, x2, y2 = min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
-
-                # Apply the scaling factor to the cropping coordinates
-                self.cropped_x1 = int(x1 * self.scale_x)
-                self.cropped_y1 = int(y1 * self.scale_y)
-                self.cropped_x2 = int(x2 * self.scale_x)
-                self.cropped_y2 = int(y2 * self.scale_y)
-
-                # Crop the image using the scaled coordinates
-                cropped_image = self.original_image.crop((self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2))
-                self.cropped_image = pil_to_cv2(cropped_image)
-                filename = 'ocr_capture.png'
-                cv2.imwrite(filename, self.cropped_image)
-
-                # Perform the action based on self.capture
-                if self.capture in self.capture_actions:
-                    self.capture_actions[self.capture](self.cropped_image)
-                    self.update_data_display()
-                else:
-                    print(f"Invalid capture action: {self.capture}")
-
-            # We do this so that we dont click and re-extend the instrument group
-            if self.current_box not in self.persistent_boxes:
-                self.canvas.delete(self.current_box)
-            self.current_box = None
 
     def clear_boxes(self):
 
@@ -1302,14 +1758,17 @@ class ImageViewerApp:
 
     def capture_pid(self, cropped_image):
         print('Perform actions for capturing PID')
-        # Perform actions for capturing line
-        result = self.reader.readtext(cropped_image, **self.reader_settings)
-        if result:
-            self.pid = ' '.join([box[1] for box in result])
-            self.pid_coords = (self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2)
-        else:
-            self.pid = ''
-            print('no result')
+        try:
+            # Perform actions for capturing line
+            result = self.reader.readtext(cropped_image, **self.reader_settings)
+            if result:
+                self.pid = ' '.join([box[1] for box in result])
+                self.pid_coords = (self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2)
+            else:
+                self.pid = ''
+                print('no result')
+        except Exception as e:
+            print('error capturing pid \n',e)
 
     def capture_comment(self, cropped_image):
         print('Perform actions for capturing a comment')
@@ -1322,22 +1781,39 @@ class ImageViewerApp:
 
         #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.comment, fill="blue", font=("Courier", 12))
 
+    def catergorize_labels(self):
+        def set_group_callback(x,y):
+            self.group_inst, self.group_other = x, y
+        update_groups(self.labels, self.group_inst, self.group_other, self.root, callback=set_group_callback)
+        print(self.group_other)
 
     def capture_instruments(self, cropped_image):
+        offset = (self.cropped_x1, self.cropped_y1)
         # Perform actions for capturing instruments
         # cropped_image = pil_to_cv2(cropped_image)
         labels, boxes, scores = model_predict_on_mozaic(cropped_image, self.model_inst)
         if labels:
-            #self.last_inst_box = self.current_box
-            self.persistent_boxes.append(self.current_box)
+            self.persistent_boxes.append(self.crop_rectangle)
+            print('added ',self.crop_rectangle,' to persistent boxes')
             self.active_inst_box_count += 1
+            for i, label in enumerate(labels):
+                print(f"{label}: {scores[i]:.2f} | ", end='')
             # self.persistent_texts.append(self.current_text)
+            print()
             inst_prediction_data = zip(labels, boxes, scores)
-            inst_data = return_inst_data2(inst_prediction_data, cropped_image, self.reader, self.minscore_inst,
-                                          self.instrument_reader_settings)
+
+
+            inst_data = return_inst_data2(inst_prediction_data, cropped_image, self.reader,
+                                          self.instrument_reader_settings, radius=self.association_radius,
+                                          min_scores=self.min_scores,
+                                          offset=offset, comment_box_expand=self.comment_box_expand, ocr_results=self.ocr_results,
+                                          inst_labels=self.group_inst, other_labels=self.group_other)
+
+            for data in inst_data:
+                print(data)
 
             self.inst_data.extend(inst_data)
-            print(self.inst_data)
+            #print(self.inst_data.get('label'))
 
     def vote(self):
         # Create a dictionary to store tag_no counts
