@@ -58,7 +58,13 @@ class FindAnInstrumentApp:
             draw = ImageDraw.Draw(img)
 
             for coords_str in coords_lines:
-                coords = list(map(int, coords_str.strip('[]').split(',')))
+                if coords_str.startswith('tensor'):
+                    remove = ['(',')','[',']',' ','tensor']
+                    for rm in remove:
+                        coords_str = coords_str.replace(rm, '')
+                    coords = list(map(round, map(float, coords_str.split(','))))
+                else:
+                    coords = list(map(int, coords_str.strip('[]').split(',')))
                 draw.rectangle(coords, outline=color, width=thickness)
 
             # Save and display modified image

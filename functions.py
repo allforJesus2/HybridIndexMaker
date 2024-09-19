@@ -13,6 +13,53 @@ import hashlib
 import time
 import json
 import pickle
+import tkinter as tk
+from tkinter import ttk
+import openpyxl
+
+def compile_excels(input_folder, output_folder=None, prefix='page', timestamp=True):
+    """
+    Compile multiple Excel files into a single Excel file.
+
+    Args:
+    input_folder (str): Path to the folder containing input Excel files.
+    output_folder (str, optional): Path to save the output Excel file. If None, uses input_folder.
+    prefix (str, optional): Prefix of Excel files to compile. Defaults to 'page'.
+    timestamp (bool, optional): Whether to include a timestamp in the output filename. Defaults to True.
+
+    Returns:
+    str: Path to the compiled Excel file.
+    """
+    if output_folder is None:
+        output_folder = input_folder
+
+    if timestamp:
+        timestamp_str = f"_{int(time.time())}"
+    else:
+        timestamp_str = ""
+
+    output_filename = os.path.join(output_folder, f"compiled_output{timestamp_str}.xlsx")
+
+    output_workbook = openpyxl.Workbook()
+    output_sheet = output_workbook.active
+    first_file = True
+
+    for file_name in os.listdir(input_folder):
+        if file_name.endswith(".xlsx") and file_name.startswith(prefix):
+            workbook = openpyxl.load_workbook(os.path.join(input_folder, file_name))
+            sheet = workbook.active
+
+            if first_file:
+                for row in sheet.iter_rows(min_row=1, max_row=1):
+                    for cell in row:
+                        output_sheet[cell.coordinate].value = cell.value
+                first_file = False
+
+            for row in sheet.iter_rows(min_row=2):
+                output_sheet.append([cell.value for cell in row])
+
+    output_workbook.save(output_filename)
+    return output_filename
 
 def pil_to_cv2(pil_image):
     """
@@ -76,8 +123,34 @@ def merge_common_substrings(str1, str2):
     # Append any remaining words from either string
     merged_words.extend(words1[i:])
     merged_words.extend(["/" + word for word in words2[j:]])
+    joined_words = " ".join(merged_words)
+    if joined_words[-1:].isalpha():
+        joined_words = joined_words+"S"
+    return joined_words
 
-    return " ".join(merged_words)
+def condense_hyphen_string(s):
+    if not s:
+        return ""
+    words = s.split()
+    result = []
+
+    for word in words:
+        if '/' in word:
+            parts = word.split('/')
+            prefixes = [part.split('-')[:-1] for part in parts]
+            suffixes = [part.split('-')[-1] for part in parts]
+
+            if all(prefix == prefixes[0] for prefix in prefixes):
+                condensed = '-'.join(prefixes[0] + ['/'.join(suffixes)])
+                result.append(condensed)
+            else:
+                result.append(word)
+        else:
+            result.append(word)
+
+    return ' '.join(result)
+
+
 def pdf2png(pdf_file, target_width):
     doc = fitz.open(pdf_file)
     page = doc[0]  # Assume the first page is representative of the document
@@ -217,14 +290,12 @@ def overlap(box1, box2):
     return overlap_ratio
 
 
-def return_inst_data2(prediction_data, img, reader, rs, clip=0, radius=180,
+def return_inst_data(prediction_data, img, reader, rs, expand=0.0, radius=180,
                       inst_labels=None,
                       other_labels=None,
                       min_scores=None,
-                      return_pic=False,
                       offset=None, ocr_results=None, comment_box_expand=30):
-    #print('instrument labels ', inst_labels)
-    #print('other labels ', other_labels)
+
     all_data = []
     group_inst = []
     group_other = []
@@ -232,8 +303,12 @@ def return_inst_data2(prediction_data, img, reader, rs, clip=0, radius=180,
 
     # Separate the groups and extract centers
     for label, box, score in prediction_data:
-        if score < min_scores[label]:
-            continue
+        try:
+            if score < min_scores[label]:
+                continue
+        except Exception as e:
+            print(e, '. Maybe try setting minscores --> settings >> set object minscores')
+
         if label in inst_labels:
             group_inst.append((label, box, score))
         if label in other_labels:
@@ -243,10 +318,13 @@ def return_inst_data2(prediction_data, img, reader, rs, clip=0, radius=180,
     for label, box, score in group_inst:
 
         tag, tag_no = '', ''
-        x_min, y_min, x_max, y_max = box.tolist()
+        x_min, y_min, x_max, y_max = map(int, box.tolist())
         inst_center = calculate_center(box)
 
-        crop_img = img[int(y_min) + clip:int(y_max) - clip, int(x_min) + clip:int(x_max) - clip]
+        x_expand = int((x_max-x_min)*expand/2)
+        y_expand = int((y_max-y_min)*expand/2)
+
+        crop_img = img[(y_min - y_expand):(y_max + y_expand), (x_min - x_expand):(x_max + x_expand)]
         try:
             results = reader.readtext(crop_img, **rs)
         except Exception as e:
@@ -271,7 +349,7 @@ def return_inst_data2(prediction_data, img, reader, rs, clip=0, radius=180,
         if ocr_results:
             comment = get_comment(ocr_results, offset_box, comment_box_expand)
         data = {'tag': tag, 'tag_no': tag_no, 'score': score, 'box': box, 'label': label, 'type': inst_type,
-                'comment': comment, 'image': crop_img if return_pic else ''}
+                'comment': comment}
         all_data.append(data)
 
     return all_data
@@ -1061,84 +1139,76 @@ def load_easyocr_results_pickle(filename='easyocr_results.pkl'):
         print("File not found.")
         return []
 
-
-import tkinter as tk
-from tkinter import Listbox
-
-import tkinter as tk
-from tkinter import Listbox
-
 def update_groups(labels, group_inst, group_other, root, callback=None):
-    # Create a new window
     window = tk.Toplevel(root)
+    window.title("Update Groups")
+    window.geometry("800x500")
 
-    # Create a frame for the labels listbox and buttons
-    frame_labels = tk.Frame(window)
-    frame_labels.pack(side=tk.LEFT, padx=10)
 
-    # Create a listbox for the labels
-    listbox_labels = Listbox(frame_labels)
+    main_frame = ttk.Frame(window, padding="10 10 10 10")
+    main_frame.pack(fill=tk.BOTH, expand=True)
+
+    # Create and configure the three main columns
+    labels_frame = ttk.Frame(main_frame)
+    inst_frame = ttk.Frame(main_frame)
+    other_frame = ttk.Frame(main_frame)
+
+    labels_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+    inst_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
+    other_frame.grid(row=0, column=2, padx=10, pady=10, sticky="nsew")
+
+    main_frame.columnconfigure(0, weight=1)
+    main_frame.columnconfigure(1, weight=1)
+    main_frame.columnconfigure(2, weight=1)
+    main_frame.rowconfigure(0, weight=1)
+
+    # Labels column
+    ttk.Label(labels_frame, text="Available Labels").pack(pady=(0, 5))
+    listbox_labels = tk.Listbox(labels_frame, selectmode=tk.MULTIPLE)
+    listbox_labels.pack(fill=tk.BOTH, expand=True)
+
     for item in labels:
         if item not in group_inst and item not in group_other:
             listbox_labels.insert(tk.END, item)
-    listbox_labels.pack()
 
-    # Function to move selected item from labels to group_inst
-    def move_to_inst():
-        selected = listbox_labels.get(tk.ACTIVE)
-        listbox_inst.insert(tk.END, selected)
-        listbox_labels.delete(tk.ACTIVE)
+    # Group Inst column
+    ttk.Label(inst_frame, text="Group Inst").pack(pady=(0, 5))
+    listbox_inst = tk.Listbox(inst_frame, selectmode=tk.MULTIPLE)
+    listbox_inst.pack(fill=tk.BOTH, expand=True)
 
-    # Function to move selected item from labels to group_other
-    def move_to_other():
-        selected = listbox_labels.get(tk.ACTIVE)
-        listbox_other.insert(tk.END, selected)
-        listbox_labels.delete(tk.ACTIVE)
-
-    # Buttons to move items
-    button_inst = tk.Button(frame_labels, text="Move to Group Inst", command=move_to_inst)
-    button_other = tk.Button(frame_labels, text="Move to Group Other", command=move_to_other)
-    button_inst.pack()
-    button_other.pack()
-
-    # Create a frame for the group listboxes
-    frame_groups = tk.Frame(window)
-    frame_groups.pack(side=tk.LEFT, padx=10)
-
-    # Create two listboxes for the groups
-    listbox_inst = Listbox(frame_groups)
-    listbox_other = Listbox(frame_groups)
-
-    # Populate the listboxes with the current groups
     for item in group_inst:
         listbox_inst.insert(tk.END, item)
+
+    # Group Other column
+    ttk.Label(other_frame, text="Group Other").pack(pady=(0, 5))
+    listbox_other = tk.Listbox(other_frame, selectmode=tk.MULTIPLE)
+    listbox_other.pack(fill=tk.BOTH, expand=True)
+
     for item in group_other:
         listbox_other.insert(tk.END, item)
 
-    listbox_inst.pack()
-    listbox_other.pack()
+    # Button functions
+    def move_items(from_listbox, to_listbox):
+        selected_indices = from_listbox.curselection()
+        selected_items = [from_listbox.get(i) for i in selected_indices]
+        for item in selected_items:
+            to_listbox.insert(tk.END, item)
+        for index in reversed(selected_indices):
+            from_listbox.delete(index)
 
-    # Function to remove selected item from group_inst
-    def remove_from_inst():
-        selected = listbox_inst.get(tk.ACTIVE)
-        listbox_labels.insert(tk.END, selected)
-        listbox_inst.delete(tk.ACTIVE)
+    # Buttons
+    button_frame = ttk.Frame(main_frame)
+    button_frame.grid(row=1, column=0, columnspan=3, pady=10)
 
+    ttk.Button(button_frame, text="→ Group Inst",
+               command=lambda: move_items(listbox_labels, listbox_inst)).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="→ Group Other",
+               command=lambda: move_items(listbox_labels, listbox_other)).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="← From Group Inst",
+               command=lambda: move_items(listbox_inst, listbox_labels)).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="← From Group Other",
+               command=lambda: move_items(listbox_other, listbox_labels)).pack(side=tk.LEFT, padx=5)
 
-
-    # Function to remove selected item from group_other and move it back to labels
-    def remove_from_other():
-        selected = listbox_other.get(tk.ACTIVE)
-        listbox_labels.insert(tk.END, selected)
-        listbox_other.delete(tk.ACTIVE)
-
-    # Buttons to remove items
-    button_remove_inst = tk.Button(frame_groups, text="Remove from Group Inst", command=remove_from_inst)
-    button_remove_other = tk.Button(frame_groups, text="Remove from Group Other", command=remove_from_other)
-    button_remove_inst.pack()
-    button_remove_other.pack()
-
-    # Function to close the window and update the groups
     def save_close_window():
         nonlocal group_inst, group_other
         group_inst = list(listbox_inst.get(0, tk.END))
@@ -1147,9 +1217,6 @@ def update_groups(labels, group_inst, group_other, root, callback=None):
             callback(group_inst, group_other)
         window.destroy()
 
-    # Button to close the window
-    button_close = tk.Button(window, text="Save and Close", command=save_close_window)
-    button_close.pack()
+    ttk.Button(main_frame, text="Save and Close", command=save_close_window).grid(row=2, column=1, pady=10)
 
-    # Start the main loop
     window.mainloop()

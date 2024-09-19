@@ -2,7 +2,104 @@ import cv2
 import numpy as np
 import time
 import matplotlib.pyplot as plt
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import defaultdict
 
+def join_strings(str1, str2):
+    # Find the length of the shorter string
+    min_length = min(len(str1), len(str2))
+
+    # Start with the full length of the shorter string
+    overlap = min_length
+
+    # Find the largest overlap
+    while overlap > 0:
+        if str1[-overlap:] == str2[:overlap]:
+            return str1 + str2[overlap:]
+        overlap -= 1
+
+    # If no overlap is found, simply concatenate the strings
+    return str1 + str2
+def stitch_words(ocr_results):
+    # Sort results by y-coordinate (top to bottom)
+    sorted_results = sorted(ocr_results, key=lambda x: x[0][0][1])
+
+    # Group results by approximate y-coordinate (same line)
+    line_threshold = 10  # Adjust based on your image resolution
+    lines = defaultdict(list)
+    for result in sorted_results:
+        y_coord = result[0][0][1]
+        line_key = y_coord // line_threshold
+        lines[line_key].append(result)
+
+    stitched_results = []
+    for line in lines.values():
+        # Sort words in the line by x-coordinate (left to right)
+        line.sort(key=lambda x: x[0][0][0])
+
+        # Stitch words in the line
+        stitched_line = []
+        for i, word in enumerate(line):
+            if i == 0:
+                stitched_line.append(word)
+                continue
+
+            prev_word = stitched_line[-1]
+            if should_stitch(prev_word, word):
+                stitched_word = stitch_two_words(prev_word, word)
+                stitched_line[-1] = stitched_word
+            else:
+                stitched_line.append(word)
+
+        stitched_results.extend(stitched_line)
+
+    return stitched_results
+
+
+def should_stitch(word1, word2):
+    # Check if the words are close enough horizontally
+    x1_max = max(coord[0] for coord in word1[0])
+    x2_min = min(coord[0] for coord in word2[0])
+    distance = x2_min - x1_max
+
+    # Adjust this threshold based on your image resolution and font size
+    distance_threshold = 20
+
+    return distance <= distance_threshold
+
+
+def stitch_two_words(word1, word2):
+    # Combine the bounding boxes
+    new_box = [
+        word1[0][0],  # Top-left
+        word2[0][1],  # Top-right
+        word2[0][2],  # Bottom-right
+        word1[0][3],  # Bottom-left
+    ]
+
+    # Combine the text
+    new_text = join_strings(word1[1], word2[1])
+
+    # Combine the confidence scores (you may want to adjust this logic)
+    new_confidence = (word1[2] + word2[2]) / 2
+
+    return (new_box, new_text, new_confidence)
+
+
+def stitch_text(text1, text2):
+    # Find the overlap
+    min_overlap = 3  # Minimum characters to consider for overlap
+    max_overlap = min(len(text1), len(text2))
+
+    for i in range(max_overlap, min_overlap - 1, -1):
+        if text1[-i:].lower() == text2[:i].lower():
+            return text1 + text2[i:]
+
+    # If no significant overlap found, just concatenate with a space
+    return text1 + " " + text2
+
+
+# Modify the main HardOCR function to use the new stitching algorithm
 def HardOCR(image, reader, reader_settings,
             sub_img_size=1300, stride=1250):
     rs = reader_settings
@@ -10,19 +107,107 @@ def HardOCR(image, reader, reader_settings,
     current_time1 = time.time()
     ocr_results = perform_ocr_on_subimages(image, reader, rs, sub_img_size=sub_img_size, stride=stride)
     current_time2 = time.time()
-    print(f'time elapsed: {current_time2 - current_time1}')
+    print(f'OCR time elapsed: {current_time2 - current_time1}')
 
     current_time1 = time.time()
-    ocr_results_fixed = process_overlapping_boxes(image, ocr_results, reader)
+    stitched_results = stitch_words(ocr_results)
     current_time2 = time.time()
-    print(f'time elapsed: {current_time2 - current_time1}')
+    print(f'Stitching time elapsed: {current_time2 - current_time1}')
 
     current_time1 = time.time()
-    ocr_results_fixed_rotated = correct_for_rotated_text2(image, ocr_results_fixed, reader, rs)
+    final_results = correct_for_rotated_text2(image, stitched_results, reader, rs)
     current_time2 = time.time()
-    print(f'time elapsed: {current_time2 - current_time1}')
+    print(f'Rotation correction time elapsed: {current_time2 - current_time1}')
 
-    return ocr_results_fixed_rotated
+    return final_results
+
+# START PARALLELE STUFF
+def perform_ocr_on_subimages_parallel(img, reader, rs,
+                                      sub_img_size=1300, stride=1250):
+    sub_images, offsets = split_image(img, sub_img_size, stride)
+
+    with ThreadPoolExecutor() as executor:
+        future_to_subimg = {executor.submit(process_subimage, sub_img, offset, reader, rs): i
+                            for i, (sub_img, offset) in enumerate(zip(sub_images, offsets))}
+
+        ocr_results = []
+        for future in as_completed(future_to_subimg):
+            i = future_to_subimg[future]
+            print(f'\rprocessing subimage {i + 1} of {len(sub_images)}', end='')
+            ocr_results.extend(future.result())
+
+    return ocr_results
+
+
+def process_subimage(sub_img, offset, reader, rs):
+    sub_results = reader.readtext(sub_img, **rs)
+    adjusted_results = []
+    for result in sub_results:
+        box = result[0]
+        adjusted_box = adjust_box_coordinates_with_offset(box, offset)
+        result = list(result)
+        result[0] = adjusted_box
+        adjusted_results.append(result)
+    return adjusted_results
+
+
+def process_overlapping_boxes_parallel(img, ocr_results, reader):
+    overlapping_groups, non_overlapping_results = find_overlapping_boxes(ocr_results)
+
+    with ThreadPoolExecutor() as executor:
+        future_to_group = {executor.submit(process_group, img, group, reader): i
+                           for i, group in enumerate(overlapping_groups)}
+
+        for future in as_completed(future_to_group):
+            i = future_to_group[future]
+            print(f'\rprocessing overlap group {i + 1} of {len(overlapping_groups)}', end='')
+            non_overlapping_results.extend(future.result())
+
+    return non_overlapping_results
+
+
+def process_group(img, group, reader):
+    roi_coords = extract_roi_from_group(group)
+    roi_ocr_results = ocr_on_roi(img, roi_coords, reader)
+    roi_offset = roi_coords[0]
+    return adjust_roi_results_offset(roi_ocr_results, roi_offset)
+
+
+def correct_for_rotated_text2_parallel(img, results, reader, rs):
+    with ThreadPoolExecutor() as executor:
+        future_to_result = {executor.submit(correct_result, img, result, reader, rs): i
+                            for i, result in enumerate(results)}
+
+        corrected_results = []
+        for future in as_completed(future_to_result):
+            corrected_results.append(future.result())
+
+    return corrected_results
+
+
+def correct_result(img, result, reader, rs):
+    result_list = list(result)
+    box = result[0]
+    x1, y1, x2, y2 = int(box[0][0]), int(box[0][1]), int(box[2][0]), int(box[2][1])
+    if abs(y1 - y2) > abs(x1 - x2):
+        try:
+            crop_img = img[y1:y2, x1:x2]
+            rotated_img = cv2.rotate(crop_img, cv2.ROTATE_90_CLOCKWISE)
+            sub_results = reader.readtext(rotated_img, **rs)
+            result_list[1] = sub_results[0][1]
+        except:
+            print(f'*** no text detected couldnt rotate {sub_results}')
+    return result_list
+
+# END PARALLEL STUFF
+
+def adjust_box_coordinates_with_offset(box, offset):
+    return [
+        (box[0][0] + offset[0], box[0][1] + offset[1]),
+        (box[1][0] + offset[0], box[1][1] + offset[1]),
+        (box[2][0] + offset[0], box[2][1] + offset[1]),
+        (box[3][0] + offset[0], box[3][1] + offset[1])
+    ]
 def split_image(img, sub_img_size, stride):
     # Get the size of the input image
     h, w = img.shape[:2]
@@ -63,12 +248,7 @@ def perform_ocr_on_subimages(img, reader, rs,
         adjusted_results = []
         for result in sub_results:
             box = result[0]
-            adjusted_box = [
-                (box[0][0] + offset[0], box[0][1] + offset[1]),
-                (box[1][0] + offset[0], box[1][1] + offset[1]),
-                (box[2][0] + offset[0], box[2][1] + offset[1]),
-                (box[3][0] + offset[0], box[3][1] + offset[1])
-            ]
+            adjusted_box = adjust_box_coordinates_with_offset(box, offset)
             result = list(result)
             result[0] = adjusted_box
             adjusted_results.append(result)  # Appending adjusted box and text
@@ -87,9 +267,6 @@ def create_annotated_image(img_path, results):
         box = result[0]
         text = result[1]
         box = convert_to_ints(box)
-        # Adjust the box coordinates with the offset
-        # print(box)
-        # Draw the bounding box and text on the image
         cv2.polylines(img, [np.array(box)], True, (0, 255, 0), 2)
         cv2.putText(img, text, (box[0][0], box[0][1] - 10), cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 0, 0), 1, cv2.LINE_AA)
 
@@ -181,12 +358,7 @@ def adjust_roi_results_offset(roi_results, roi_offset):
     adjusted_results = []
     for result in roi_results:
         box = result[0]
-        adjusted_box = [
-            (box[0][0] + roi_offset[0], box[0][1] + roi_offset[1]),
-            (box[1][0] + roi_offset[0], box[1][1] + roi_offset[1]),
-            (box[2][0] + roi_offset[0], box[2][1] + roi_offset[1]),
-            (box[3][0] + roi_offset[0], box[3][1] + roi_offset[1])
-        ]
+        adjusted_box = adjust_box_coordinates_with_offset(box, roi_offset)
         result = list(result)
         result[0] = adjusted_box
         adjusted_results.append(result)  # Appending adjusted box and text

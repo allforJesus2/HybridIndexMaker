@@ -1,15 +1,14 @@
+import tkinter.messagebox
+import tkinter.simpledialog
 
 # pip install tkinter PIL xlwings detecto easyocr opencv-python numpy matplotlib torch PyMuPDF
 from functions import *
-import tkinter as tk
 from tkinter import filedialog, ttk
 from PIL import Image, ImageTk
 import os
 import xlwings as xw
 from detecto.core import Model
 import easyocr
-import cv2
-import numpy as np
 import importlib.util
 from reader_settings import SetReaderSettings
 import json
@@ -19,7 +18,6 @@ from convolutioner import ConvolutionReplacer
 import xml.etree.ElementTree as ET
 import re
 from openpyxl.drawing.image import Image as xlImage
-from openpyxl.worksheet.hyperlink import Hyperlink
 from minscore_edit import SliderApp
 from find_an_instrument import FindAnInstrumentApp
 from console_redirect import *
@@ -45,15 +43,144 @@ class AutoScrollbar(ttk.Scrollbar):
 
 class ImageViewerApp:
     def __init__(self, root):
+        # Initialize root window
         self.root = root
         self.root.title("Image Viewer")
-        root.wm_state('zoomed')
+        self.root.wm_state('zoomed')
 
-        # set up console redirects
+        # Create menu bar
+        self.create_menu_bar()
+
+        # Create data window
+        self.create_data_window()
+
+        # Initialize console redirects
         self.console_popup = ConsolePopup(self.root)
 
+        # Initialize canvas and scrollbars
+        self.create_canvas_and_scrollbars()
 
+        # Initialize image attributes
+        self.initialize_image_attributes()
 
+        # Initialize instrument and equipment models
+        self.initialize_models()
+
+        # Initialize reader settings
+        self.initialize_reader_settings()
+
+        # Initialize other attributes
+        self.initialize_other_attributes()
+
+        # Bind key shortcuts to the respective commands
+        self.bind_key_shortcuts()
+
+        # Initialize data display
+        self.update_data_display()
+
+        # Initialize captured data
+        self.capture = 'pid'
+
+    # region Init stuff
+    def create_menu_bar(self):
+        # Create a menu bar
+        self.menu_bar = tk.Menu(self.root)
+        self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.file_menu.add_command(label="Open Folder", command=self.open_folder)
+        self.menu_bar.add_cascade(label="File", menu=self.file_menu)
+
+        # Create a commands menu
+        self.command_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.command_menu.add_command(label="Create images from PDF", command=self.open_pdf2png)
+        self.command_menu.add_command(label="Load Object detection model", command=self.load_pretrained_model)
+        self.command_menu.add_command(label="Merge pdfs", command=self.merge_pdfs)
+        self.command_menu.add_command(label="Swap services", command=self.swap_services)
+        self.command_menu.add_command(label="Clear instrument group", command=self.clear_instrument_group)
+        self.command_menu.add_command(label="Load a Tag Correction Function", command=self.load_correct_fn)
+        self.command_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
+        self.command_menu.add_command(label="Toggle show line text", command=self.toggle_show_line_text)
+        self.command_menu.add_command(label="Live Write Mode", command=lambda: self.set_write_mode('xlwings'))
+        self.command_menu.add_command(label="Silent/quick Write Mode", command=lambda: self.set_write_mode('openpyxl'))
+        self.command_menu.add_command(label="Save workbook", command=self.save_workbook)
+        self.command_menu.add_command(label="Auto Generate Index", command=self.auto_generate_index)
+        self.command_menu.add_command(label="Generate type xlsx via convolution", command=self.create_tag_type_xlsx)
+        self.command_menu.add_command(label="Generate Instrument Count", command=self.generate_instrument_count)
+        self.command_menu.add_command(label="Generate Single Page Instrument Count", command=self.one_instrument_count)
+        self.command_menu.add_command(label="Generate Filename PID xlsx", command=self.make_pid_page_xlsx)
+        self.command_menu.add_command(label="Test instrument Model", command=self.test_model_mosaic)
+        self.command_menu.add_command(label="Get OCR", command=self.get_ocr)
+        self.command_menu.add_command(label="Get all pages OCR", command=self.get_all_ocr)
+        self.command_menu.add_command(label="Find an instrument App", command=self.open_FAIA)
+        self.command_menu.add_command(label="Open Console Popup", command=self.open_console)
+        self.command_menu.add_command(label="Open Page Results folder", command=self.open_page_results)
+        self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
+
+        # Create a capture menu
+        self.capture_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.capture_menu.add_command(label="Capture PID", command=lambda: self.set_capture('pid'))
+        self.capture_menu.add_command(label="Capture Instrument Group", command=lambda: self.set_capture('instruments'))
+        self.capture_menu.add_command(label="Capture Line", command=lambda: self.set_capture('line'))
+        self.capture_menu.add_command(label="Capture Equipment", command=lambda: self.set_capture('equipment'))
+        self.capture_menu.add_command(label="Capture Service In", command=lambda: self.set_capture('service_in'))
+        self.capture_menu.add_command(label="Capture Service Out", command=lambda: self.set_capture('service_out'))
+        self.capture_menu.add_command(label="Capture comment", command=lambda: self.set_capture('comment'))
+        self.menu_bar.add_cascade(label="Capture", menu=self.capture_menu)
+
+        # Create page menu
+        self.page_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.page_menu.add_command(label="Next", command=self.next_image)
+        self.page_menu.add_command(label="Previous", command=self.previous_image)
+        self.page_menu.add_command(label="Go to Page", command=self.open_go_to_page)
+        self.menu_bar.add_cascade(label="Page", menu=self.page_menu)
+
+        # settings menu
+        self.settings_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.settings_menu.add_command(label="Open instrument reader settings",
+                                       command=self.open_instrument_reader_settings)
+        self.settings_menu.add_command(label="Open general reader settings", command=self.open_general_reader_settings)
+        self.settings_menu.add_command(label="Save Settings", command=self.save_attributes)
+        self.settings_menu.add_command(label="Set min score for instruments", command=self.set_minscore)
+        self.settings_menu.add_command(label="Set instrument comment box expand", command=self.set_comment_box_expand)
+        self.settings_menu.add_command(label="Set association radius", command=self.set_association_radius)
+        self.settings_menu.add_command(label="Set instrument groups", command=self.catergorize_labels)
+        self.settings_menu.add_command(label="Set object min scores", command=self.set_object_scores)
+        self.settings_menu.add_command(label="Set object box expand %", command=self.set_object_box_expand)
+        self.menu_bar.add_cascade(label="Settings", menu=self.settings_menu)
+
+        # Create a Help menu
+        self.help_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.help_menu.add_command(label="Keybindings", command=self.show_keybindings)
+        self.help_menu.add_command(label="Object detection lables", command=self.show_labels)
+        self.menu_bar.add_cascade(label="Help", menu=self.help_menu)
+
+        self.root.config(menu=self.menu_bar)
+
+    def create_data_window(self):
+        # Create a separate window for displaying captured data
+        self.data_window = tk.Toplevel(self.root)
+        self.data_window.title("Captured Data")
+
+        # Get the screen width and height
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        # Calculate the x-coordinate and height of the data_window
+        x = screen_width - 260  # assuming a width of 400 for the data_window
+        height = screen_height - 100
+
+        # Set the geometry of the data_window
+        self.data_window.geometry(f'250x{height}+{x}+32')
+
+        # Create a Text widget to display the captured data
+        self.data_text = tk.Text(self.data_window, wrap=tk.WORD, font=("Courier", 14))
+        self.data_text.pack(fill=tk.BOTH, expand=True)
+
+        # Bind the window close event to update the data display
+        self.data_window.protocol("WM_DELETE_WINDOW", self.update_data_display)
+        # Ensure data_window is always on top of the root window
+        self.root.bind("<FocusIn>", lambda event: self.data_window.lift())
+
+    def create_canvas_and_scrollbars(self):
         # Vertical and horizontal scrollbars for canvas
         vbar = AutoScrollbar(self.root, orient='vertical')
         hbar = AutoScrollbar(self.root, orient='horizontal')
@@ -72,38 +199,43 @@ class ImageViewerApp:
         self.root.rowconfigure(0, weight=1)
         self.root.columnconfigure(0, weight=1)
 
-        # Bind events to the Canvas
-        self.canvas.bind('<Configure>', self.show_image)  # canvas is resized
-        self.canvas.bind('<ButtonPress-3>', self.move_from)
-        self.canvas.bind('<B3-Motion>', self.move_to)
-        self.canvas.bind('<MouseWheel>', self.wheel)  # with Windows and MacOS, but not Linux
-        self.canvas.bind('<Button-5>', self.wheel)  # only with Linux, wheel scroll down
-        self.canvas.bind('<Button-4>', self.wheel)  # only with Linux, wheel scroll up
+        self.crop_rectangle = None
+        self.container = None
 
-        # Initialize other attributes
+    def initialize_image_attributes(self):
+        # Initialize image attributes
         self.image_list = []
         self.image_path = None
         self.current_image_index = 0
         self.original_image = None
         self.imscale = 1.0  # scale for the canvas image
         self.delta = 1.3  # zoom magnitude
-
-
-
-        self.image_path = None
-        self.original_image = None
         self.cv2img = None
 
+    def initialize_models(self):
+        # Initialize instrument and equipment models
+        self.model_inst_path = "models/turbine.pth"
+        #self.model_equipment_path = "models/equipment_services_v2.pth"
 
+        print('loading models from ', self.model_inst_path)
+        try:
+            # load instrument recognition model
+            self.load_pretrained_model(self.model_inst_path)
+        except Exception as e:
+            print('Error', e)
+            print('load model failed. you will likely have to load the model from command')
+        '''
+        labels = 'tank, pump, service_in, service_out'
+        self.labels_equipment = labels.split(', ')
+        try:
+            # load instrument recognition model
+            self.model_equip = Model.load(self.model_equipment_path, self.labels_equipment)
+        except Exception as e:
+            print('Error', e)
+            print('load model failed. you will likely have to load the model from command')'''
 
-
-
-
-
-        #reader settings
-        # Initialize General OCR setting
-
-        # Instrument reader settings
+    def initialize_reader_settings(self):
+        # Initialize reader settings
         self.instrument_reader_settings = {
             "low_text": 0.3,
             "min_size": 10,
@@ -118,7 +250,6 @@ class ImageViewerApp:
             "decoder": 'beamsearch'
         }
 
-        # general reader settings
         self.reader_settings = {
             "low_text": 0.3,
             "min_size": 10,
@@ -132,28 +263,23 @@ class ImageViewerApp:
             "allowlist": '',
             "decoder": 'beamsearch'
         }
+
+    def initialize_other_attributes(self):
+        # Initialize other attributes
         self.ocr_results = None
         self.comment_box_expand = 20
-
         self.line = None
         self.service_in = None
         self.service_out = None
         self.equipment = None
         self.inst_data = None
         self.pid = None
+        self.pid_coords = None
         self.comment = None
         self.persistent_boxes = []
         self.persistent_texts = []
         self.correct_fn = None
         self.correct_fn_path = None
-
-
-        self.image_list = []
-        self.image_path = None
-        self.current_image_index = 0
-        self.original_image = None
-        self.cv2img = None
-
         self.mouse_pressed = False
         self.start_x = 0
         self.start_y = 0
@@ -171,167 +297,36 @@ class ImageViewerApp:
             'service_out': self.capture_service_out,
             'comment': self.capture_comment
         }
-
         self.whole_page_ocr_results = None
-
-        print('loading reader')
         self.reader = easyocr.Reader(['en'])
-        print('reader loaded')
-
-        #labels = '3WAY, ARROW, BALL, BUTTERFLY, CHECK, CORIOLIS, DCS, DIAPHRAM, GATE, GLOBE, INST, KNIFE, MAGNETIC, ORIFICE, PLUG, SEAL, ULTRASONIC, VBALL'
         self.labels = []
         self.group_inst = []
+        self.object_box_expand = 0.0
         self.group_other = []
         self.min_scores = {}
-
-        self.model_inst_path = "models/turbine.pth"
-        self.model_equipment_path = "models/equipment_services_v2.pth"
-        try:
-            # load instrument recognition model
-            print('loading model')
-            #self.model_inst = Model.load(self.model_inst_path, self.labels)
-            self.load_pretrained_model(self.model_inst_path)
-            print('model loaded')
-        except Exception as e:
-            print('Error',e)
-            print('load model failed. you will likely have to load the model from command')
-
-        labels = 'tank, pump, service_in, service_out'
-        self.labels_equipment = labels.split(', ')
-        self.model_equipment_path = "models/equipment_services_v2.pth"
-        try:
-            # load instrument recognition model
-            print('loading equipment/service model')
-            self.model_equip = Model.load(self.model_equipment_path, self.labels_equipment)
-            print('model loaded')
-        except Exception as e:
-            print('Error',e)
-            print('load model failed. you will likely have to load the model from command')
-
         self.association_radius = 33
         self.minscore_inst = 0.74
         self.inst_data = []
         self.active_inst_box_count = 0
         self.show_line = False
         self.write_mode = 'xlwings'
-
         self.equipment_defined = None
+        self.crop_start = None
+        self.crop_end = None
 
-        # Create a menu bar
-        self.menu_bar = tk.Menu(self.root)
-        self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.file_menu.add_command(label="Open Folder", command=self.open_folder)
-        self.menu_bar.add_cascade(label="File", menu=self.file_menu)
+    def bind_events_to_canvas(self):
+        # Bind events to the canvas
+        self.canvas.bind('<Configure>', self.show_image)  # canvas is resized
+        self.canvas.bind('<ButtonPress-3>', self.move_from)
+        self.canvas.bind('<B3-Motion>', self.move_to)
+        self.canvas.bind('<MouseWheel>', self.wheel)  # with Windows and MacOS, but not Linux
+        self.canvas.bind('<Button-5>', self.wheel)  # only with Linux, wheel scroll down
+        self.canvas.bind('<Button-4>', self.wheel)  # only with Linux, wheel scroll up
+        self.canvas.bind('<ButtonPress-1>', self.start_crop)
+        self.canvas.bind('<B1-Motion>', self.update_crop)
+        self.canvas.bind('<ButtonRelease-1>', self.end_crop)
 
-        # Create a commands menu
-        self.command_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.command_menu.add_command(label="Create images from PDF", command=self.open_pdf2png)
-        self.command_menu.add_command(label="Load Object detection model", command=self.load_pretrained_model)
-        self.command_menu.add_command(label="Merge pdfs", command=self.merge_pdfs)
-        #self.command_menu.add_command(label="Set comment", command=self.set_comment)
-        self.command_menu.add_command(label="Swap services", command=self.swap_services)
-        #self.command_menu.add_command(label="Clear boxes", command=self.clear_boxes)
-        self.command_menu.add_command(label="Clear instrument group", command=self.clear_instrument_group)
-        self.command_menu.add_command(label="Load a Tag Correction Function", command=self.load_correct_fn)
-        self.command_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
-        self.command_menu.add_command(label="Toggle show line text", command=self.toggle_show_line_text)
-        self.command_menu.add_command(label="Live Write Mode", command=lambda: self.set_write_mode('xlwings'))
-        self.command_menu.add_command(label="Silent/quick Write Mode", command=lambda: self.set_write_mode('openpyxl'))
-        self.command_menu.add_command(label="Save workbook", command=self.save_workbook)
-        self.command_menu.add_command(label="Auto Generate Index", command=self.auto_generate_index)
-        self.command_menu.add_command(label="Generate type xlsx via convolution", command=self.create_tag_type_xlsx)
-        #self.command_menu.add_command(label="Generate type xlsx ai", command=self.create_tag_type_xlsx_ai)
-        self.command_menu.add_command(label="Generate Instrument Count", command=self.generate_instrument_count)
-        self.command_menu.add_command(label="Generate Single Page Instrument Count", command=self.one_instrument_count)
-
-        self.command_menu.add_command(label="Generate Filename PID xlsx", command=self.make_pid_page_xlsx)
-        self.command_menu.add_command(label="Test instrument Model", command=self.test_model_mosaic)
-        self.command_menu.add_command(label="Get OCR", command=self.get_ocr)
-        self.command_menu.add_command(label="Get all pages OCR", command=self.get_all_ocr)
-        self.command_menu.add_command(label="Find an instrument App", command=self.open_FAIA)
-        self.command_menu.add_command(label="Open Console Popup", command=self.open_console)
-
-
-
-        self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
-
-        # Create a capture menu
-        self.capture_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.capture_menu.add_command(label="Capture PID", command=lambda: self.set_capture('pid'))
-        self.capture_menu.add_command(label="Capture Instrument Group", command=lambda: self.set_capture('instruments'))
-        self.capture_menu.add_command(label="Capture Line", command=lambda: self.set_capture('line'))
-        self.capture_menu.add_command(label="Capture Equipment", command=lambda: self.set_capture('equipment'))
-        self.capture_menu.add_command(label="Capture Service In", command=lambda: self.set_capture('service_in'))
-        self.capture_menu.add_command(label="Capture Service Out", command=lambda: self.set_capture('service_out'))
-        self.capture_menu.add_command(label="Capture comment", command=lambda: self.set_capture('comment'))
-
-        self.menu_bar.add_cascade(label="Capture", menu=self.capture_menu)
-
-
-        # Create page menu
-        self.page_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.page_menu.add_command(label="Next", command=self.next_image)
-        self.page_menu.add_command(label="Previous", command=self.previous_image)
-        self.page_menu.add_command(label="Go to Page", command=self.open_go_to_page)
-        self.menu_bar.add_cascade(label="Page", menu=self.page_menu)
-
-        # settings menu
-        self.settings_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.settings_menu.add_command(label="Open instrument reader settings", command=self.open_instrument_reader_settings)
-        self.settings_menu.add_command(label="Open general reader settings", command=self.open_general_reader_settings)
-        self.settings_menu.add_command(label="Save Settings", command=self.save_attributes)
-        self.settings_menu.add_command(label="Set min score for instruments", command=self.set_minscore)
-        self.settings_menu.add_command(label="Set instrument comment box expand", command=self.set_comment_box_expand)
-        self.settings_menu.add_command(label="Set association radius", command=self.set_association_radius)
-        self.settings_menu.add_command(label="Set instrument groups", command=self.catergorize_labels)
-        self.settings_menu.add_command(label="Set object min scores", command=self.set_object_scores)
-
-        self.menu_bar.add_cascade(label="Settings", menu=self.settings_menu)
-
-        # Create a Help menu
-        self.help_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.help_menu.add_command(label="Keybindings", command=self.show_keybindings)
-        self.help_menu.add_command(label="Object detection lables", command=self.show_labels)
-
-        self.menu_bar.add_cascade(label="Help", menu=self.help_menu)
-
-        self.root.config(menu=self.menu_bar)
-        self.capture='pid'
-        self.pid_coords = None
-
-
-
-
-
-
-
-        # Create a separate window for displaying captured data
-        self.data_window = tk.Toplevel(self.root)
-        self.data_window.title("Captured Data")
-
-
-        # Get the screen width and height
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-
-        # Calculate the x-coordinate and height of the data_window
-        x = screen_width - 260  # assuming a width of 400 for the data_window
-        height = screen_height-100
-
-        # Set the geometry of the data_window
-        self.data_window.geometry(f'250x{height}+{x}+32')
-
-
-        # Create a Text widget to display the captured data
-        self.data_text = tk.Text(self.data_window, wrap=tk.WORD, font=("Courier", 14))
-        self.data_text.pack(fill=tk.BOTH, expand=True)
-
-        # Bind the window close event to update the data display
-        self.data_window.protocol("WM_DELETE_WINDOW", self.update_data_display)
-        # Ensure data_window is always on top of the root window
-        self.root.bind("<FocusIn>", lambda event: self.data_window.lift())
-
-        #key bindings
+    def bind_key_shortcuts(self):
         # Bind key shortcuts to the respective commands
         self.root.bind('n', lambda event: self.next_image())
         self.root.bind('b', lambda event: self.previous_image())
@@ -346,8 +341,8 @@ class ImageViewerApp:
         self.root.bind('v', lambda event: self.vote())
         self.root.bind('s', lambda event: self.swap_services())
         self.root.bind('g', lambda event: self.set_capture('comment'))
+        self.root.bind('<Return>', lambda event: self.set_comment())
 
-        # key bindings
         # Bind key shortcuts to the respective commands
         self.root.bind('N', lambda event: self.next_image())
         self.root.bind('B', lambda event: self.previous_image())
@@ -363,35 +358,13 @@ class ImageViewerApp:
         self.root.bind('S', lambda event: self.swap_services())
         self.root.bind('G', lambda event: self.set_capture('comment'))
 
-        # shift key binding
+        # Initialize shift key binding
         self.shift_held = False
         self.root.bind('<KeyPress-Shift_L>', self.shift_pressed)
         self.root.bind('<KeyRelease-Shift_L>', self.shift_released)
+    # endregion
 
-
-
-
-
-        self.canvas.bind('<ButtonPress-1>', self.start_crop)
-        self.canvas.bind('<B1-Motion>', self.update_crop)
-        self.canvas.bind('<ButtonRelease-1>', self.end_crop)
-
-        # Bind mouse events for cropping
-        #self.canvas.bind('<Button-1>', self.start_drawing)
-        #self.canvas.bind('<B1-Motion>', self.draw_box)
-        #self.canvas.bind('<ButtonRelease-1>', self.end_drawing)
-
-        self.crop_start = None
-        self.crop_end = None
-        self.crop_rectangle = None
-
-        self.mouse_pressed = False
-        self.start_x = 0
-        self.start_y = 0
-
-
-    #image scrolling and zooming
-
+    # region image scrolling and zooming
     def scroll_y(self, *args, **kwargs):
         ''' Scroll canvas vertically and redraw the image '''
         self.canvas.yview(*args, **kwargs)  # scroll vertically
@@ -499,6 +472,8 @@ class ImageViewerApp:
             # Put image into container rectangle and use it to set proper coordinates to the image
             self.container = self.canvas.create_rectangle(0, 0, self.width, self.height, width=0)
 
+            # Bind events to the canvas
+            self.bind_events_to_canvas()
 
             # Get the current window size
             window_width = self.canvas.winfo_width()
@@ -544,8 +519,8 @@ class ImageViewerApp:
         image_height = bbox[3] - bbox[1]
 
         # Calculate offsets
-        offset_x = (window_width - image_width) / 2
-        offset_y = (window_height - image_height) / 2
+        offset_x = 0 # (window_width - image_width) / 2
+        offset_y = 0 # (window_height - image_height) / 2
 
         # Move the image
         self.canvas.move(self.container, offset_x, offset_y)
@@ -604,40 +579,6 @@ class ImageViewerApp:
             self.crop_start = None
             self.crop_end = None
 
-    def end_drawing(self, event):
-        if self.mouse_pressed:
-            self.mouse_pressed = False
-            if self.current_box:
-
-                # Calculate the coordinates of the cropping box
-                x1, y1, x2, y2 = self.canvas.coords(self.current_box)
-                # Ensure the coordinates are in the correct order
-                x1, y1, x2, y2 = min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
-
-                # Apply the scaling factor to the cropping coordinates
-                self.cropped_x1 = int(x1 * self.scale_x)
-                self.cropped_y1 = int(y1 * self.scale_y)
-                self.cropped_x2 = int(x2 * self.scale_x)
-                self.cropped_y2 = int(y2 * self.scale_y)
-
-                # Crop the image using the scaled coordinates
-                cropped_image = self.original_image.crop((self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2))
-                self.cropped_image = pil_to_cv2(cropped_image)
-                filename = 'ocr_capture.png'
-                cv2.imwrite(filename, self.cropped_image)
-
-                # Perform the action based on self.capture
-                if self.capture in self.capture_actions:
-                    self.capture_actions[self.capture](self.cropped_image)
-                    self.update_data_display()
-                else:
-                    print(f"Invalid capture action: {self.capture}")
-
-            # We do this so that we dont click and re-extend the instrument group
-            if self.current_box not in self.persistent_boxes:
-                self.canvas.delete(self.current_box)
-            self.current_box = None
-
     def canvas_to_image(self, canvas_x, canvas_y):
         # Convert canvas coordinates to image coordinates
         bbox = self.canvas.bbox(self.container)
@@ -645,32 +586,22 @@ class ImageViewerApp:
         image_y = int((canvas_y - bbox[1]) / self.imscale)
         return image_x, image_y
 
+    # endregion
 
-    # end image scrolling and zooming
-
-    def start_drawing(self, event):
-        self.mouse_pressed = True
-        self.start_x = event.x
-        self.start_y = event.y
-
-    def draw_box(self, event):
-        if self.mouse_pressed:
-            if self.current_box and self.current_box not in self.persistent_boxes:
-                self.canvas.delete(self.current_box)  # Remove the previous box
-                if self.current_text:
-                    self.canvas.delete(self.current_text)  # Remove the previous text
-                # we do it here so we can view the last line capture
-            x1, y1 = self.start_x, self.start_y
-            x2, y2 = event.x, event.y
-
-            self.current_box = self.canvas.create_rectangle(x1, y1, x2, y2, outline='orange')
-
-
-    ###########
-
+    def set_object_box_expand(self):
+        response = tkinter.simpledialog.askfloat(title='Set percent box expand',
+                                                               prompt='Enter the % box expand for group inst',
+                                                               initialvalue=self.object_box_expand)
+        try:
+            self.object_box_expand = float(response)
+        except Exception as e:
+            tk.messagebox.showinfo('set box expand fail',e)
 
     def open_console(self):
         self.console_popup.create_console_popup()
+
+    def open_page_results(self):
+        os.startfile(self.results_folder)
 
     def open_FAIA(self):
         faia_window = tk.Toplevel(self.root)
@@ -696,7 +627,7 @@ class ImageViewerApp:
         minscore = tk.simpledialog.askinteger("Scale percent", "Enter a minscore 1-100:", initialvalue=50)/100
 
         # Ask for an image to test
-        image_path = filedialog.askopenfilename(title="Select an image for testing",
+        image_path = filedialog.askopenfilename(title="Select an image for testing", initialfile=self.image_path,
                                                 filetypes=(("PNG files", "*.png"), ("JPEG files", "*.jpg")))
         if image_path:
             image = cv2.imread(image_path)
@@ -773,6 +704,7 @@ class ImageViewerApp:
         all_object_names.sort()
         print(all_object_names)
         return all_object_names
+
     def create_tag_type_xlsx_ai(self):
         model_path = filedialog.askopenfilename(title="PTH Model file",filetypes=[('PTH File', '*.pth')])
         labels = self.load_labels()
@@ -842,117 +774,33 @@ class ImageViewerApp:
                 print(f"Error saving file: {e}")
                 counter += 1
 
-
     def generate_instrument_count(self):
 
         compiled_inst_count_xlsx = openpyxl.Workbook()
         compiled_ws = compiled_inst_count_xlsx.active
         compiled_ws.title = 'Instrument Count'
-        #compiled_header = None
+        ocr_needed = tk.messagebox.askyesno(prompt='Do we need to do OCR (for comments)?\nNote if avaliable we use existing results')
 
         self.current_image_index = 0
         for i in range(len(self.image_list)):
-
-            inst_count_xlsx = openpyxl.Workbook()
-            ws = inst_count_xlsx.active
-            ws.title = 'Instrument Count'
-            header = None
-
-
             self.load_image()
-            if self.ocr_results == None:
-                self.get_ocr()
-            self.current_image_index += 1
-
-            img = self.cv2img
-
-            if self.pid_coords:
-                self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
-                cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
-                self.capture_pid(cropped_image)
-
-            labels, boxes, scores = model_predict_on_mozaic(img, self.model_inst)
-
-            results = zip(labels, boxes, scores)
-            inst_img = plot_pic(img, labels, boxes, scores)
-            cv2.imwrite(os.path.join(self.results_folder, 'inst_img.png'), inst_img)
-
-            data = return_inst_data2(results, img, self.reader, self.instrument_reader_settings,
-                                     min_scores=self.min_scores,
-                                     inst_labels=self.group_inst, other_labels=self.group_other,
-                                     comment_box_expand=self.comment_box_expand,
-                                     ocr_results=self.ocr_results, offset=(0,0),
-                                     radius=self.association_radius)
-            #print(data)
-            row = 0
-            for inst in data:
-
-
-                inst['pid'] = self.pid
-                inst['file'] = self.image_path
-
-                if row == 0:
-                    header = [key for key in inst]
-                    ws.append(header)
-                    compiled_ws.append(header)
-                    row += 1
-
-                for col, (key, value) in enumerate(inst.items(), start=1):
-                    for s in [ws, compiled_ws]:
-                        current_cell = s.cell(row=row, column=col)
-                        if key == 'image':
-                            # Convert cv2 image (BGR) to RGB
-                            img_rgb = cv2.cvtColor(value, cv2.COLOR_BGR2RGB)
-
-                            # Convert numpy array to PIL Image
-                            pil_img = Image.fromarray(img_rgb)
-                            # Save PIL Image to a bytes buffer
-                            img_byte_arr = io.BytesIO()
-                            pil_img.save(img_byte_arr, format='PNG')
-                            img_byte_arr = img_byte_arr.getvalue()
-
-                            # Create an openpyxl Image object
-                            excel_image = xlImage(io.BytesIO(img_byte_arr))
-                            # Add the image to the worksheet
-                            s.add_image(excel_image, current_cell.coordinate)
-                            pass
-                        elif key == 'file':
-                            current_cell.hyperlink = value
-                            current_cell.value = value
-                        elif key == 'box':
-
-                            # Converting the rounded tensor to a list
-                            rounded_list = value.tolist()
-                            int_list = [int(x) for x in rounded_list]
-
-                            current_cell.value = str(int_list)
-
-                        else:
-                            current_cell.value = str(value)
-
-                row += 1
-
-
-            # Save the Excel workbook to a file in the results folder
-            save_location = os.path.join(self.results_folder, "Instrument_Count.xlsx")
-            inst_count_xlsx.save(save_location)
-            print(f"File saved as: {save_location}")
+            self.one_instrument_count(ocr_needed)
 
         #NOW we compile all the xlsxs into one
         save_location = os.path.join(self.folder_path, "Compiled_Instrument_Count.xlsx")
         compiled_inst_count_xlsx.save(save_location)
         print(f"File saved as: {save_location}")
 
-    def one_instrument_count(self):
-
-
+    def one_instrument_count(self, ocr_needed=True):
         inst_count_xlsx = openpyxl.Workbook()
         ws = inst_count_xlsx.active
         ws.title = 'Instrument Count'
 
-
-        if self.ocr_results == None:
-            self.get_ocr()
+        if ocr_needed:
+            if self.ocr_results == None:
+                self.get_ocr()
+        else:
+            self.ocr_results = None
 
         img = self.cv2img
 
@@ -962,71 +810,238 @@ class ImageViewerApp:
             self.capture_pid(cropped_image)
 
         labels, boxes, scores = model_predict_on_mozaic(img, self.model_inst)
-
         results = zip(labels, boxes, scores)
         inst_img = plot_pic(img, labels, boxes, scores)
         cv2.imwrite(os.path.join(self.results_folder, 'inst_img.png'), inst_img)
 
-        data = return_inst_data2(results, img, self.reader, self.instrument_reader_settings,
+        inst_data = return_inst_data(results, img, self.reader, self.instrument_reader_settings,
                                  inst_labels=self.group_inst, other_labels=self.group_other,
-                                 min_scores=self.min_scores,
+                                 min_scores=self.min_scores, expand=self.object_box_expand,
                                  comment_box_expand=self.comment_box_expand,
                                  ocr_results=self.ocr_results, offset=(0,0),
                                  radius=self.association_radius)
-        #print(data)
-        row = 0
-        for inst in data:
 
+        # data = {'tag': tag, 'tag_no': tag_no, 'score': score, 'box': box, 'label': label, 'type': inst_type,
+        #        'comment': comment}
 
-            inst['pid'] = self.pid
-            inst['file'] = self.image_path
+        for row, data in enumerate(inst_data, start=1):
+            data['pid'] = self.pid
+            data['file'] = self.image_path
 
-            if row == 0:
-                header = [key for key in inst]
-                ws.append(header)
-                row += 1
+            if ws['A1'].value is None:  # Check if header doesn't exist
+                self.create_excel_header(ws, data)
 
-            for col, (key, value) in enumerate(inst.items(), start=1):
-                for s in [ws]:
-                    current_cell = s.cell(row=row, column=col)
-                    if key == 'image' and value:
-                        # Convert cv2 image (BGR) to RGB
-                        img_rgb = cv2.cvtColor(value, cv2.COLOR_BGR2RGB)
+            self.populate_excel_row(ws, data, row)
 
-                        # Convert numpy array to PIL Image
-                        pil_img = Image.fromarray(img_rgb)
-                        # Save PIL Image to a bytes buffer
-                        img_byte_arr = io.BytesIO()
-                        pil_img.save(img_byte_arr, format='PNG')
-                        img_byte_arr = img_byte_arr.getvalue()
-
-                        # Create an openpyxl Image object
-                        excel_image = xlImage(io.BytesIO(img_byte_arr))
-                        # Add the image to the worksheet
-                        s.add_image(excel_image, current_cell.coordinate)
-                        pass
-                    elif key == 'file':
-                        current_cell.hyperlink = value
-                        current_cell.value = value
-                    elif key == 'box':
-
-                        # Converting the rounded tensor to a list
-                        rounded_list = value.tolist()
-                        int_list = [int(x) for x in rounded_list]
-
-                        current_cell.value = str(int_list)
-
-                    else:
-                        current_cell.value = str(value)
-
-            row += 1
-
-
-        # Save the Excel workbook to a file in the results folder
         save_location = os.path.join(self.results_folder, "Instrument_Count.xlsx")
         inst_count_xlsx.save(save_location)
         print(f"File saved as: {save_location}")
+    def append_data_with_xlwings(self):
+        # Check if the file exists, if not, create a new workbook
+        if not os.path.exists(self.workbook_path):
+            self.wb = xw.Book()
+            self.wb.save(self.workbook_path)
 
+        wb = xw.Book(self.workbook_path)
+        if 'Instrument Index' not in wb.sheet_names:
+            wb.sheets.add(name='Instrument Index')
+
+        ws = wb.sheets['Instrument Index']
+
+        for data in self.inst_data:
+
+            data.update({
+                'PID': '',
+                'SERVICE': '',
+                'LINE/EQUIP': '',
+                'INPUT COMMENT': '',
+                'FILE': '',
+                'OFFSET BOX': ''
+            })
+
+            last_row = ws.range('A1').expand('down').last_cell.row
+            data['PID'] = self.pid
+
+            si = condense_hyphen_string(self.service_in)
+            so = condense_hyphen_string(self.service_out)
+
+
+            # Handle service and line/equipment logic
+            if self.service_in and self.service_out:
+                data['SERVICE'] = f"{si} TO {so}" if self.service_in != self.service_out else f"{si} RECIRCULATION"
+            elif self.service_in:
+                data['SERVICE'] = f"{si} OUTLET"
+            elif self.service_out:
+                data['SERVICE'] = f"TO {so}"
+
+            if self.line:
+                data['LINE/EQUIP'] = self.line
+            elif self.equipment:
+                words = self.equipment.split(' ')
+                data['LINE/EQUIP'] = words[0]
+                data['SERVICE'] = ' '.join(words[1:])
+
+
+            if self.comment:
+                data['INPUT COMMENT'] = self.comment
+
+            data['FILE'] = self.image_path
+
+            x1 = self.cropped_x1
+            y1 = self.cropped_y1
+
+            list_box = data['box'].tolist()
+            int_box = [int(x) for x in list_box]
+            offset_box = [int_box[0] + x1, int_box[1] + y1, int_box[2] + x1, int_box[3] + y1]
+
+            data['OFFSET BOX'] = offset_box
+            if ws.range('A1').value is None:  # Check if header doesn't exist
+                self.create_excel_header(ws, data)
+
+            self.populate_excel_row(ws, data, last_row + 1)
+
+        self.turn_boxes_blue()
+
+    def append_data_with_openpyxl(self):
+        print('starting fn')
+        # Check if the file exists, if not, create a new workbook
+        if not os.path.exists(self.workbook_path):
+            self.wb = openpyxl.Workbook()
+            #self.wb.save(workbook_path)
+        else:
+            if not self.wb:
+                self.wb = openpyxl.load_workbook(self.workbook_path)
+                print('wb loaded')
+
+        # Check if the 'Instrument Index' sheet exists, if not, create it
+        if 'Instrument Index' not in self.wb.sheetnames:
+            self.ws = self.wb.create_sheet('Instrument Index')
+            # Define the header row
+            header = ['PID', 'TAG', 'TAG_NO', 'LABEL', 'LINE/EQUIP', 'SERVICE', 'COMMENT']
+            # Write the header row to the first sheet of the workbook
+            self.ws.append(header)
+        else:
+            self.ws = self.wb['Instrument Index']
+
+        print('starting data append')
+        # Append data to the worksheet
+        for data in self.inst_data:
+            row = [self.pid, data['tag'], data['tag_no'], data['label']]
+
+            if self.service_in and self.service_out:
+                row.append(self.service_in + ' TO ' + self.service_out)
+            elif self.service_in:
+                row.append('FROM ' + self.service_in)
+            elif self.service_out:
+                row.append('TO ' + self.service_out)
+            else:
+                row.append('')
+
+            if self.line:
+                row.append(self.line)
+            elif self.equipment:
+                words = self.equipment.split(' ')
+                row.append(words[0])
+                if len(words) > 1:
+                    row.append(' '.join(words[1:]))
+                else:
+                    row.append('')
+            else:
+                row.extend(['', ''])
+
+            if self.comment:
+                row.append(self.comment)
+            else:
+                row.append('')
+
+            self.ws.append(row)
+
+
+        self.turn_boxes_blue()
+
+    def create_excel_header(self, worksheet, data):
+        """
+        Create a header row in the given worksheet based on the keys in the data dictionary.
+
+        :param worksheet: The worksheet to add the header to (either xlwings or openpyxl worksheet)
+        :param data: A dictionary containing the data structure
+        :return: None
+        """
+        header = list(data.keys())
+
+        if isinstance(worksheet, xw.main.Sheet):
+            # xlwings worksheet
+            for i, column_header in enumerate(header, start=1):
+                worksheet.range((1, i)).value = column_header
+        elif isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
+            # openpyxl worksheet
+            worksheet.append(header)
+        else:
+            raise ValueError("Unsupported worksheet type")
+
+    def populate_excel_row(self, worksheet, data, row):
+        """
+        Populate a row in the given worksheet with the provided data.
+
+        :param worksheet: The worksheet to populate (either xlwings or openpyxl worksheet)
+        :param data: A dictionary containing the data to be written
+        :param row: The row number to populate
+        :return: None
+        """
+        for col, (key, value) in enumerate(data.items(), start=1):
+            if isinstance(worksheet, xw.main.Sheet):
+                # xlwings worksheet
+                cell = worksheet.range((row, col))
+            elif isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
+                # openpyxl worksheet
+                cell = worksheet.cell(row=row, column=col)
+            else:
+                raise ValueError("Unsupported worksheet type")
+
+            if value is not None:
+                cell.value = str(value)
+
+    def populate_excel_row_adv(self, worksheet, data, row):
+        """
+        Populate a row in the given worksheet with the provided data.
+
+        :param worksheet: The worksheet to populate (either xlwings or openpyxl worksheet)
+        :param data: A dictionary containing the data to be written
+        :param row: The row number to populate
+        :return: None
+        """
+        for col, (key, value) in enumerate(data.items(), start=1):
+            if isinstance(worksheet, xw.main.Sheet):
+                # xlwings worksheet
+                cell = worksheet.range((row, col))
+            elif isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
+                # openpyxl worksheet
+                cell = worksheet.cell(row=row, column=col)
+            else:
+                raise ValueError("Unsupported worksheet type")
+
+            if key == 'image' and value is not None:
+                # Handle image insertion
+                img_rgb = cv2.cvtColor(value, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(img_rgb)
+                img_byte_arr = io.BytesIO()
+                pil_img.save(img_byte_arr, format='PNG')
+                img_byte_arr = img_byte_arr.getvalue()
+
+                if isinstance(worksheet, xw.main.Sheet):
+                    cell.add_picture(io.BytesIO(img_byte_arr))
+                else:
+                    excel_image = xlImage(io.BytesIO(img_byte_arr))
+                    worksheet.add_image(excel_image, cell.coordinate)
+            elif key == 'file':
+                cell.hyperlink = value
+                cell.value = value
+            elif key == 'box':
+                rounded_list = value.tolist()
+                int_list = [int(x) for x in rounded_list]
+                cell.value = str(int_list)
+            else:
+                cell.value = str(value)
 
 
     def make_pid_page_xlsx(self):
@@ -1180,7 +1195,7 @@ class ImageViewerApp:
 
         inst_prediction_data = zip(labels, boxes, scores)
 
-        inst_data = return_inst_data2(inst_prediction_data, self.img, self.reader,
+        inst_data = return_inst_data(inst_prediction_data, self.img, self.reader,
                                      self.minscore_inst, self.instrument_reader_settings)
 
         print(len(inst_data), 'instruments captured')
@@ -1361,6 +1376,9 @@ class ImageViewerApp:
     def show_labels(self):
 
         tk.messagebox.showinfo("object recognition labels", self.labels)
+
+
+    # Initalization and Project Setup
     def save_attributes(self):
         """Save class attributes to a JSON file"""
         attributes_to_save = [
@@ -1535,6 +1553,8 @@ class ImageViewerApp:
 
     def open_folder(self):
 
+        self.initialize_models()
+
         # Define a custom sorting key function
         def natural_sort_key(s):
             return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', s)]
@@ -1561,122 +1581,11 @@ class ImageViewerApp:
             else:
                 raise ValueError(f"Invalid write mode: {self.write_mode}")
 
+
         except Exception as e:
             tk.messagebox.showerror(e)
             print(f"error {e}")
 
-    def append_data_with_xlwings(self):
-        # Check if the file exists, if not, create a new workbook
-        if not os.path.exists(self.workbook_path):
-            self.wb = xw.Book()  # Create a new workbook
-            self.wb.save(self.workbook_path)  # Save the workbook to the specified path
-
-        # Open the workbook (it will be opened in the background)
-        wb = xw.Book(self.workbook_path)
-        # Check if the 'Instrument Index' sheet exists, if not, create it
-        if 'Instrument Index' not in wb.sheet_names:
-            wb.sheets.add(name='Instrument Index')
-            self.inst_data
-            # Define the header row
-            header = ['PID', 'TAG', 'TAG_NO', 'LABEL', 'TYPE', 'LINE/EQUIP', 'SERVICE', 'COMMENT', 'USER NOTE']
-
-            # Write the header row to the first sheet of the workbook
-            sheet = wb.sheets['Instrument Index']
-            for i, column_header in enumerate(header, start=1):
-                sheet.range((1, i)).value = column_header
-
-        ws = wb.sheets['Instrument Index']
-
-        for data in self.inst_data:
-            last_row = ws.range('A1').expand('down').last_cell.row
-            ws.range(last_row+1, 1).value = self.pid
-            ws.range(last_row + 1, 2).value = data['tag']
-            ws.range(last_row + 1, 3).value = data['tag_no']
-            ws.range(last_row + 1, 4).value = data['label']
-            ws.range(last_row + 1, 5).value = data['type']
-
-
-            if self.service_in and self.service_out:
-                if self.service_in == self.service_out:
-                    ws.range(last_row + 1, 7).value = self.service_in + ' RECIRCULATION'
-                else:
-                    ws.range(last_row + 1, 7).value = self.service_in + ' TO ' + self.service_out
-            elif self.service_in:
-                ws.range(last_row + 1, 7).value = self.service_in + " OUTLET"
-            elif self.service_out:
-                ws.range(last_row + 1, 7).value = 'TO ' + self.service_out
-
-            if self.line:
-                ws.range(last_row + 1, 6).value = self.line
-            elif self.equipment:
-                words = self.equipment.split(' ')
-                ws.range(last_row + 1, 6).value = words[0]
-                ws.range(last_row + 1, 7).value = ' '.join(words[1:])
-
-            ws.range(last_row + 1, 8).value = data['comment']
-
-            if self.comment:
-                ws.range(last_row + 1, 9).value = self.comment
-        #self.persistent_boxes.append(self.current_box)
-
-        self.turn_boxes_blue()
-
-    def append_data_with_openpyxl(self):
-        print('starting fn')
-        # Check if the file exists, if not, create a new workbook
-        if not os.path.exists(self.workbook_path):
-            self.wb = openpyxl.Workbook()
-            #self.wb.save(workbook_path)
-        else:
-            if not self.wb:
-                self.wb = openpyxl.load_workbook(self.workbook_path)
-                print('wb loaded')
-
-        # Check if the 'Instrument Index' sheet exists, if not, create it
-        if 'Instrument Index' not in self.wb.sheetnames:
-            self.ws = self.wb.create_sheet('Instrument Index')
-            # Define the header row
-            header = ['PID', 'TAG', 'TAG_NO', 'LABEL', 'LINE/EQUIP', 'SERVICE', 'COMMENT']
-            # Write the header row to the first sheet of the workbook
-            self.ws.append(header)
-        else:
-            self.ws = self.wb['Instrument Index']
-
-        print('starting data append')
-        # Append data to the worksheet
-        for data in self.inst_data:
-            row = [self.pid, data['tag'], data['tag_no'], data['label']]
-
-            if self.service_in and self.service_out:
-                row.append(self.service_in + ' TO ' + self.service_out)
-            elif self.service_in:
-                row.append('FROM ' + self.service_in)
-            elif self.service_out:
-                row.append('TO ' + self.service_out)
-            else:
-                row.append('')
-
-            if self.line:
-                row.append(self.line)
-            elif self.equipment:
-                words = self.equipment.split(' ')
-                row.append(words[0])
-                if len(words) > 1:
-                    row.append(' '.join(words[1:]))
-                else:
-                    row.append('')
-            else:
-                row.extend(['', ''])
-
-            if self.comment:
-                row.append(self.comment)
-            else:
-                row.append('')
-
-            self.ws.append(row)
-
-
-        self.turn_boxes_blue()
 
     def save_workbook(self):
         # Save the workbook
@@ -1696,10 +1605,12 @@ class ImageViewerApp:
 
         self.active_inst_box_count = 0
         self.inst_data = []
+        self.comment = ''
         self.update_data_display()
 
     def set_comment(self):
         self.comment = tk.simpledialog.askstring("Input", "Please enter a Comment:")
+        self.update_data_display()
 
 
     def create_capture_text(self):
@@ -1803,9 +1714,9 @@ class ImageViewerApp:
             inst_prediction_data = zip(labels, boxes, scores)
 
 
-            inst_data = return_inst_data2(inst_prediction_data, cropped_image, self.reader,
+            inst_data = return_inst_data(inst_prediction_data, cropped_image, self.reader,
                                           self.instrument_reader_settings, radius=self.association_radius,
-                                          min_scores=self.min_scores,
+                                          min_scores=self.min_scores, expand=self.object_box_expand,
                                           offset=offset, comment_box_expand=self.comment_box_expand, ocr_results=self.ocr_results,
                                           inst_labels=self.group_inst, other_labels=self.group_other)
 
@@ -1851,7 +1762,6 @@ class ImageViewerApp:
         if self.show_line:
             self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.line, fill="blue", font=("Courier", 12))
 
-
     def capture_equipment(self, cropped_image):
         # Perform actions for capturing line
         result = self.reader.readtext(cropped_image, **self.reader_settings)
@@ -1864,45 +1774,31 @@ class ImageViewerApp:
         self.line = None
         #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.equipment, fill="blue", font=("Courier", 12))
 
+    def process_service_text(self, cropped_image, target_attribute):
+        result = self.reader.readtext(cropped_image, **self.reader_settings)
+
+        if not result:
+            setattr(self, target_attribute, '')
+            return
+
+        just_text = ' '.join([box[1] for box in result])
+
+        current_value = getattr(self, target_attribute)
+
+        if not self.shift_held:
+            setattr(self, target_attribute, just_text)
+        else:
+            ms = merge_common_substrings(current_value, just_text)
+
+            setattr(self, target_attribute, ms)
+
+        self.equipment = None
 
     def capture_service_in(self, cropped_image):
-        # Perform actions for capturing service in
-        result = self.reader.readtext(cropped_image, **self.reader_settings)
-
-        if not result:
-            self.service_in = ''
-            return
-
-        just_text = ' '.join([box[1] for box in result])
-
-        if not self.shift_held:
-            self.service_in = just_text
-        else:
-            self.service_in = merge_common_substrings(self.service_in, just_text)
-
-        self.equipment = None
-        #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.service_in, fill="blue", font=("Courier", 12))
-
+        self.process_service_text(cropped_image, 'service_in')
 
     def capture_service_out(self, cropped_image):
-        # Perform actions for capturing service out
-        result = self.reader.readtext(cropped_image, **self.reader_settings)
-
-        if not result:
-            self.service_out = ''
-            return
-
-        just_text = ' '.join([box[1] for box in result])
-
-        if not self.shift_held:
-            self.service_out = just_text
-        else:
-            self.service_out = merge_common_substrings(self.service_out, just_text)
-
-        self.equipment = None
-        #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.service_out, fill="blue", font=("Courier", 12))
-
-
+        self.process_service_text(cropped_image, 'service_out')
 
     def update_data_display(self):
 
@@ -1911,8 +1807,8 @@ class ImageViewerApp:
         self.data_text.insert(tk.END, f"PID: {self.pid}\n")
         self.data_text.insert(tk.END, f"Page: {self.current_image_index + 1} of {len(self.image_list)}\n")
         self.data_text.insert(tk.END, f"Line: {self.line}\n\n")
-        self.data_text.insert(tk.END, f"Service In: {self.service_in}\n\n")
-        self.data_text.insert(tk.END, f"Service Out: {self.service_out}\n\n")
+        self.data_text.insert(tk.END, f"Service In: {condense_hyphen_string(self.service_in)}\n\n")
+        self.data_text.insert(tk.END, f"Service Out: {condense_hyphen_string(self.service_out)}\n\n")
         self.data_text.insert(tk.END, f"Equipment:{self.equipment}\n\n")
         self.data_text.insert(tk.END, f"Comment: {self.comment}\n\n")
         self.data_text.insert(tk.END, f"Instrument Data:\n\n")
