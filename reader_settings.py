@@ -87,7 +87,7 @@ class SetReaderSettings:
 
     def save_settings(self):
         if self.callback:
-            self.reader_settings.update({
+            self.reader_settings = {
                 "low_text": self.low_text.get(),
                 "min_size": int(self.min_size.get()),
                 "ycenter_ths": self.ycenter_ths.get(),
@@ -99,7 +99,7 @@ class SetReaderSettings:
                 "mag_ratio": self.mag_ratio.get(),
                 "allowlist": self.allowlist_entry.get(),
                 "decoder": self.decoder_entry.get(),
-            })
+            }
             self.callback(self.reader_settings)
 
     def update_image(self):

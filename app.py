@@ -1,7 +1,6 @@
 import tkinter.messagebox
 import tkinter.simpledialog
-
-# pip install tkinter PIL xlwings detecto easyocr opencv-python numpy matplotlib torch PyMuPDF
+from model_predict_on_mosaic import *
 from functions import *
 from tkinter import filedialog, ttk
 from PIL import Image, ImageTk
@@ -87,6 +86,8 @@ class ImageViewerApp:
         self.menu_bar = tk.Menu(self.root)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(label="Open Folder", command=self.open_folder)
+        self.file_menu.add_command(label="Open Current Image", command=self.open_image_path)
+
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
 
         # Create a commands menu
@@ -104,10 +105,12 @@ class ImageViewerApp:
         self.command_menu.add_command(label="Save workbook", command=self.save_workbook)
         self.command_menu.add_command(label="Auto Generate Index", command=self.auto_generate_index)
         self.command_menu.add_command(label="Generate type xlsx via convolution", command=self.create_tag_type_xlsx)
-        self.command_menu.add_command(label="Generate Instrument Count", command=self.generate_instrument_count)
+        self.command_menu.add_command(label="Generate All pages Instrument Count", command=self.generate_instrument_count)
         self.command_menu.add_command(label="Generate Single Page Instrument Count", command=self.one_instrument_count)
+        self.command_menu.add_command(label="Compile Instrument counts", command=self.compile_excels)
         self.command_menu.add_command(label="Generate Filename PID xlsx", command=self.make_pid_page_xlsx)
-        self.command_menu.add_command(label="Test instrument Model", command=self.test_model_mosaic)
+        self.command_menu.add_command(label="Test instrument Model on Image", command=self.test_model_mosaic)
+
         self.command_menu.add_command(label="Get OCR", command=self.get_ocr)
         self.command_menu.add_command(label="Get all pages OCR", command=self.get_all_ocr)
         self.command_menu.add_command(label="Find an instrument App", command=self.open_FAIA)
@@ -145,6 +148,9 @@ class ImageViewerApp:
         self.settings_menu.add_command(label="Set instrument groups", command=self.catergorize_labels)
         self.settings_menu.add_command(label="Set object min scores", command=self.set_object_scores)
         self.settings_menu.add_command(label="Set object box expand %", command=self.set_object_box_expand)
+        self.settings_menu.add_command(label="Set NMS threshold", command=self.set_nms_threshold)
+
+
         self.menu_bar.add_cascade(label="Settings", menu=self.settings_menu)
 
         # Create a Help menu
@@ -214,7 +220,7 @@ class ImageViewerApp:
 
     def initialize_models(self):
         # Initialize instrument and equipment models
-        self.model_inst_path = "models/turbine.pth"
+        self.model_inst_path = "models/GWR.pth"
         #self.model_equipment_path = "models/equipment_services_v2.pth"
 
         print('loading models from ', self.model_inst_path)
@@ -306,6 +312,7 @@ class ImageViewerApp:
         self.min_scores = {}
         self.association_radius = 33
         self.minscore_inst = 0.74
+        self.nms_threshold = 0.5
         self.inst_data = []
         self.active_inst_box_count = 0
         self.show_line = False
@@ -588,6 +595,15 @@ class ImageViewerApp:
 
     # endregion
 
+    def set_nms_threshold(self):
+        response = tkinter.simpledialog.askfloat(title='Non-Maximum-Supression',
+                                                               prompt='Set NMS overlap threshold (smaller = fewer boxes): ',
+                                                               initialvalue=self.nms_threshold)
+        try:
+            self.nms_threshold = float(response)
+        except Exception as e:
+            tk.messagebox.showinfo('set NMS fail',e)
+
     def set_object_box_expand(self):
         response = tkinter.simpledialog.askfloat(title='Set percent box expand',
                                                                prompt='Enter the % box expand for group inst',
@@ -599,6 +615,9 @@ class ImageViewerApp:
 
     def open_console(self):
         self.console_popup.create_console_popup()
+
+    def open_image_path(self):
+        os.startfile(self.image_path)
 
     def open_page_results(self):
         os.startfile(self.results_folder)
@@ -613,26 +632,37 @@ class ImageViewerApp:
 
         slider_window = tk.Toplevel(self.root)
 
-        if not self.min_scores:
-            for label in self.labels:
+        for label in self.labels:
+            if self.min_scores.get(label):
+                continue
+            else:
                 self.min_scores[label] = self.minscore_inst
 
 
         SliderApp(slider_window, self.min_scores, callback=set_minscores)
 
     def test_model_mosaic(self):
+
+        test_on_capture = tk.messagebox.askyesno(title='test on capture?',
+                                            message='Do you want to test the model on the Capture?')
+
         if self.model_inst is None:
             tk.messagebox.showerror("Error", "Model not loaded. Load a pretrained model first.")
             return
+
         minscore = tk.simpledialog.askinteger("Scale percent", "Enter a minscore 1-100:", initialvalue=50)/100
 
-        # Ask for an image to test
-        image_path = filedialog.askopenfilename(title="Select an image for testing", initialfile=self.image_path,
-                                                filetypes=(("PNG files", "*.png"), ("JPEG files", "*.jpg")))
+        if test_on_capture == False:
+            # Ask for an image to test
+            image_path = filedialog.askopenfilename(title="Select an image for testing", initialfile=self.image_path,
+                                                    filetypes=(("PNG files", "*.png"), ("JPEG files", "*.jpg")))
+        else:
+            image_path = 'ocr_capture.png'
+
         if image_path:
             image = cv2.imread(image_path)
 
-            labels, boxes, scores = model_predict_on_mozaic(image, self.model_inst)
+            labels, boxes, scores = model_predict_on_mosaic(image, self.model_inst, threshold=self.nms_threshold)
 
             # Overlay boxes and labels on the image
             img_with_boxes = self.plot_pic(image, labels, boxes, scores, minscore=minscore)
@@ -678,120 +708,41 @@ class ImageViewerApp:
     def set_association_radius(self):
         self.association_radius = tk.simpledialog.askfloat(prompt="Enter Object association radius", title="Enter association ( Radius", initialvalue=self.association_radius)
 
-    def load_labels(self):
 
-        folder_path = filedialog.askdirectory(title="Select folder containing xmls for labels")
-        all_object_names = []
-
-        # Iterate through XML files in the folder
-        for filename in os.listdir(folder_path):
-            if filename.endswith('.xml'):
-                file_path = os.path.join(folder_path, filename)
-
-                # Load XML data
-                with open(file_path, 'r') as xml_file:
-                    xml_data = xml_file.read()
-
-                # Parse XML data
-                rootd = ET.fromstring(xml_data)
-
-                # Extract object names
-                object_names = [obj.find('name').text for obj in rootd.findall('.//object')]
-                all_object_names.extend(object_names)
-
-        all_object_names_set = set(all_object_names)
-        all_object_names = list(all_object_names_set)
-        all_object_names.sort()
-        print(all_object_names)
-        return all_object_names
-
-    def create_tag_type_xlsx_ai(self):
-        model_path = filedialog.askopenfilename(title="PTH Model file",filetypes=[('PTH File', '*.pth')])
-        labels = self.load_labels()
-        model = Model.load(model_path, labels)
-
-
-        image_folder = filedialog.askdirectory(title='Folder that has PNGs')
-        expansion_pixels = tk.simpledialog.askinteger("Expand box", "Enter box expansion pixels:", initialvalue=180)
-        confidence = tk.simpledialog.askinteger("Confidence", "Enter convolution confidence threshold:", initialvalue=80)/100
-
-        tag_type_xlsx = openpyxl.Workbook()
-        ws = tag_type_xlsx.create_sheet('tagtype')
-        # Define the header row
-        header = ['TAG', 'TAG_NO', 'LABEL', 'TYPE', 'PAGE', 'PID']
-        # Write the header row to the first sheet of the workbook
-        ws.append(header)
-
-
-        #for img in image_folder
-        for filename in os.listdir(image_folder):
-            if filename.endswith(".png") or filename.endswith(".jpg"):
-                file_path = os.path.join(image_folder, filename)
-                img = cv2.imread(file_path)
-                print(filename)
-                if self.pid_coords:
-                    self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
-                    cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
-                    self.capture_pid(cropped_image)
-
-                labels, boxes, scores = model_predict_on_mozaic(img, model)
-                results = zip(labels, boxes, scores)
-                #img_with_boxes = self.plot_pic(img, labels, boxes, scores)
-                #output_image_path = "result_image.png"
-                #cv2.imwrite(output_image_path, img_with_boxes)
-
-                for label, box, score in results:
-                    if score > confidence:
-                        x1d, y1d, x2d, y2d = box
-                        top_left, bottom_right = (int(x1d), int(y1d)), (int(x2d),int(y2d))
-                        # Expand the box by 100px (adjustable parameter)
-
-                        x1, y1 = int(max(0, top_left[0] - expansion_pixels)), int(max(0, top_left[1] - expansion_pixels))
-                        x2, y2 = int(min(img.shape[1], bottom_right[0] + expansion_pixels)), int(
-                            min(img.shape[0], bottom_right[1] + expansion_pixels))
-
-                        # Crop the image
-                        cropped_image = img[y1:y2, x1:x2]
-
-                        self.capture_instruments(cropped_image)
-
-
-                        for data in self.inst_data:
-                            data['label'] = label
-                            row = [data['tag'], data['tag_no'], data['label'], data['type'], filename, self.pid if self.pid else ""]
-                            ws.append(row)
-
-                        self.inst_data = []
-
-        counter = 1
-        while True:
-            try:
-                save_location = os.path.join(image_folder, f"tag_type{counter}.xlsx")
-                tag_type_xlsx.save(save_location)
-                print(f"File saved as: {save_location}")
-                break
-            except Exception as e:
-                print(f"Error saving file: {e}")
-                counter += 1
 
     def generate_instrument_count(self):
 
         compiled_inst_count_xlsx = openpyxl.Workbook()
         compiled_ws = compiled_inst_count_xlsx.active
         compiled_ws.title = 'Instrument Count'
-        ocr_needed = tk.messagebox.askyesno(prompt='Do we need to do OCR (for comments)?\nNote if avaliable we use existing results')
+
+        ocr_needed = tk.messagebox.askyesno(title='OCR NEEDED?',
+                                            message='Do we need to do OCR (for comments)?\nNote if avaliable we use existing results')
+
+        overwrite = tk.messagebox.askyesno(title='OVERWRITE?',
+                                            message='Do you want to overwrite Existing counts?')
+
+        sure = tk.messagebox.askyesno(title='SURE?',
+                                            message='ARE U SURE')
+        if not sure:
+            return
 
         self.current_image_index = 0
         for i in range(len(self.image_list)):
             self.load_image()
-            self.one_instrument_count(ocr_needed)
+            self.one_instrument_count(ocr_needed, overwrite)
 
+
+    def compile_excels(self):
         #NOW we compile all the xlsxs into one
-        save_location = os.path.join(self.folder_path, "Compiled_Instrument_Count.xlsx")
-        compiled_inst_count_xlsx.save(save_location)
-        print(f"File saved as: {save_location}")
+        compile_excels(self.folder_path, self.folder_path, prefix='Instrument_Count', timestamp=True, recursive=True)
 
-    def one_instrument_count(self, ocr_needed=True):
+    def one_instrument_count(self, ocr_needed=True, overwrite=True):
+
+        save_location = os.path.join(self.results_folder, "Instrument_Count.xlsx")
+        if os.path.exists(save_location) and not overwrite:
+            return
+
         inst_count_xlsx = openpyxl.Workbook()
         ws = inst_count_xlsx.active
         ws.title = 'Instrument Count'
@@ -809,7 +760,7 @@ class ImageViewerApp:
             cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
             self.capture_pid(cropped_image)
 
-        labels, boxes, scores = model_predict_on_mozaic(img, self.model_inst)
+        labels, boxes, scores = model_predict_on_mosaic(img, self.model_inst, threshold=self.nms_threshold)
         results = zip(labels, boxes, scores)
         inst_img = plot_pic(img, labels, boxes, scores)
         cv2.imwrite(os.path.join(self.results_folder, 'inst_img.png'), inst_img)
@@ -830,10 +781,10 @@ class ImageViewerApp:
 
             if ws['A1'].value is None:  # Check if header doesn't exist
                 self.create_excel_header(ws, data)
+                row += 1
 
             self.populate_excel_row(ws, data, row)
 
-        save_location = os.path.join(self.results_folder, "Instrument_Count.xlsx")
         inst_count_xlsx.save(save_location)
         print(f"File saved as: {save_location}")
     def append_data_with_xlwings(self):
@@ -1188,7 +1139,7 @@ class ImageViewerApp:
         ocr_img = plot_ocr_results(self.img, self.ocr_results)
         cv2.imwrite(os.path.join(self.results_folder, 'ocr_img.png'), ocr_img)
 
-        labels, boxes, scores = model_predict_on_mozaic(self.img, self.model_inst)
+        labels, boxes, scores = model_predict_on_mosaic(self.img, self.model_inst, threshold=self.nms_threshold)
         inst_img = plot_pic(self.img, labels, boxes, scores)
         cv2.imwrite(os.path.join(self.results_folder, 'inst_img.png'), inst_img)
         #(prediction_data, img, clip, reader, minscore, correct_fn, rs):
@@ -1509,6 +1460,7 @@ class ImageViewerApp:
             if os.path.exists(label_path):
                 with open(label_path, "r") as f:
                     self.labels = [x.strip() for x in f.read().split(",")]
+                    print(self.labels)
             else:
                 tk.messagebox.showinfo("Load error", f"{label_path} with comma separated labels not found")
             print('make sure labels are loaded correctly')
@@ -1702,7 +1654,7 @@ class ImageViewerApp:
         offset = (self.cropped_x1, self.cropped_y1)
         # Perform actions for capturing instruments
         # cropped_image = pil_to_cv2(cropped_image)
-        labels, boxes, scores = model_predict_on_mozaic(cropped_image, self.model_inst)
+        labels, boxes, scores = model_predict_on_mosaic(cropped_image, self.model_inst, threshold=self.nms_threshold)
         if labels:
             self.persistent_boxes.append(self.crop_rectangle)
             print('added ',self.crop_rectangle,' to persistent boxes')

@@ -1,23 +1,20 @@
-import torch
-import cv2
-import os
+
 import fitz
-import os
 from PyPDF2 import PdfMerger
 import copy
-import math
-import numpy as np
-from scipy.spatial import cKDTree
 import re
 import hashlib
 import time
-import json
 import pickle
 import tkinter as tk
 from tkinter import ttk
 import openpyxl
+import cv2
+import os
+import torch
+import numpy as np
 
-def compile_excels(input_folder, output_folder=None, prefix='page', timestamp=True):
+def compile_excels(input_folder, output_folder=None, prefix='page', timestamp=True, recursive=False):
     """
     Compile multiple Excel files into a single Excel file.
 
@@ -26,6 +23,7 @@ def compile_excels(input_folder, output_folder=None, prefix='page', timestamp=Tr
     output_folder (str, optional): Path to save the output Excel file. If None, uses input_folder.
     prefix (str, optional): Prefix of Excel files to compile. Defaults to 'page'.
     timestamp (bool, optional): Whether to include a timestamp in the output filename. Defaults to True.
+    recursive (bool, optional): Whether to search for Excel files recursively in the input folder. Defaults to False.
 
     Returns:
     str: Path to the compiled Excel file.
@@ -44,19 +42,37 @@ def compile_excels(input_folder, output_folder=None, prefix='page', timestamp=Tr
     output_sheet = output_workbook.active
     first_file = True
 
-    for file_name in os.listdir(input_folder):
-        if file_name.endswith(".xlsx") and file_name.startswith(prefix):
-            workbook = openpyxl.load_workbook(os.path.join(input_folder, file_name))
-            sheet = workbook.active
+    if recursive:
+        for root, dirs, files in os.walk(input_folder):
+            for file_name in files:
+                if file_name.endswith(".xlsx") and file_name.startswith(prefix):
+                    file_path = os.path.join(root, file_name)
+                    workbook = openpyxl.load_workbook(file_path)
+                    sheet = workbook.active
 
-            if first_file:
-                for row in sheet.iter_rows(min_row=1, max_row=1):
-                    for cell in row:
-                        output_sheet[cell.coordinate].value = cell.value
-                first_file = False
+                    if first_file:
+                        for row in sheet.iter_rows(min_row=1, max_row=1):
+                            for cell in row:
+                                output_sheet[cell.coordinate].value = cell.value
+                        first_file = False
 
-            for row in sheet.iter_rows(min_row=2):
-                output_sheet.append([cell.value for cell in row])
+                    for row in sheet.iter_rows(min_row=2):
+                        output_sheet.append([cell.value for cell in row])
+    else:
+        for file_name in os.listdir(input_folder):
+            if file_name.endswith(".xlsx") and file_name.startswith(prefix):
+                file_path = os.path.join(input_folder, file_name)
+                workbook = openpyxl.load_workbook(file_path)
+                sheet = workbook.active
+
+                if first_file:
+                    for row in sheet.iter_rows(min_row=1, max_row=1):
+                        for cell in row:
+                            output_sheet[cell.coordinate].value = cell.value
+                    first_file = False
+
+                for row in sheet.iter_rows(min_row=2):
+                    output_sheet.append([cell.value for cell in row])
 
     output_workbook.save(output_filename)
     return output_filename
@@ -172,122 +188,6 @@ def pdf2png(pdf_file, target_width):
         png_file = os.path.join(folder_name, f"page_{page.number + 1}.png")
         pix.save(png_file)
         print(png_file)
-
-
-def model_predict_on_mozaic(img, model, square_size=1300, stride=1200):
-    sub_images, offsets = split_image(img, square_size, stride)
-    print("length of sub_images " + str(len(sub_images)))
-
-    all_labels = []
-    all_boxes = []
-    all_scores = []
-
-    for i, image in enumerate(sub_images):
-        sub_labels, sub_boxes, sub_scores = model.predict(image)
-        print(f"image {i} : {sub_labels}")
-
-        for box in sub_boxes:
-            box[0] = box[0] + offsets[i][0]  # x1
-            box[1] = box[1] + offsets[i][1]  # y1
-            box[2] = box[2] + offsets[i][0]  # x2
-            box[3] = box[3] + offsets[i][1]  # y2
-
-
-        all_labels.append(sub_labels)
-        all_boxes.append(sub_boxes)
-        all_scores.append(sub_scores)
-
-    labels, boxes, scores = merge(all_labels, all_boxes, all_scores)
-    labels, boxes, scores = remove_overlapping_boxes(labels, boxes, scores, 0.5)
-    return labels, boxes, scores
-
-
-def split_image(img, sub_img_size=1300, stride=1200):
-    # Get the size of the input image
-    h, w = img.shape[:2]
-
-    # If the image size is smaller than sub_img_size, return the image itself
-    if h <= sub_img_size and w <= sub_img_size:
-        pad_y = max(sub_img_size - h, 0)
-        pad_x = max(sub_img_size - w, 0)
-        img = cv2.copyMakeBorder(img, 0, pad_y, 0, pad_x, cv2.BORDER_CONSTANT, value=(0, 0, 0))
-        return [img], [(0, 0)]
-
-
-    # Loop through the image and extract sub-images
-    sub_images = []
-    offsets = []
-    for y in range(0, h, stride):
-        for x in range(0, w, stride):
-
-            sub_img = img[y:y + sub_img_size, x:x + sub_img_size]
-
-            # Pad the sub-image if necessary
-            pad_y = sub_img_size - sub_img.shape[0]
-            pad_x = sub_img_size - sub_img.shape[1]
-            if pad_y > 0 or pad_x > 0:
-                sub_img = cv2.copyMakeBorder(sub_img, 0, pad_y, 0, pad_x, cv2.BORDER_CONSTANT, value=(0, 0, 0))
-
-            sub_images.append(sub_img)
-            # lot_pic(sub_img,5)
-            offsets.append((x, y))
-
-    return sub_images, offsets
-
-def merge(all_labels, all_boxes, all_scores):
-    labels = []
-    boxes = []
-    scores = []
-
-    for i in range(len(all_labels)):
-        sub_labels = all_labels[i]
-        sub_boxes = all_boxes[i]
-        sub_scores = all_scores[i]
-
-        for j in range(len(sub_labels)):
-            labels.append(sub_labels[j])
-            boxes.append(sub_boxes[j].tolist())
-            scores.append(sub_scores[j])
-
-    boxes = torch.tensor(boxes, dtype=torch.float32)
-
-    return labels, boxes, torch.tensor(scores, dtype=torch.float32)
-def remove_overlapping_boxes(labels, boxes, scores, threshold):
-    to_remove = []
-    for i in range(len(boxes)):
-        for j in range(i + 1, len(boxes)):
-            overlap_ratio = overlap(boxes[i], boxes[j])
-            if overlap_ratio > threshold:
-                # print("comparing "+labels[j]+":"+str(scores[j])+" to "+labels[i]+":"+str(scores[i]))
-                if scores[i] > scores[j]:
-                    to_remove.append(j)
-                    # print("need to remove "+str(labels[j])+" at "+str(boxes[j])+" with score "+str(scores[j]))
-                else:
-                    to_remove.append(i)
-                    # print("need to remove "+str(labels[i])+" at "+str(boxes[i])+" with score "+str(scores[i]))
-    labels = [label for i, label in enumerate(labels) if i not in to_remove]
-    boxes = [box for i, box in enumerate(boxes) if i not in to_remove]
-    scores = [score for i, score in enumerate(scores) if i not in to_remove]
-    return labels, boxes, scores
-def overlap(box1, box2):
-    # box1 is the text
-    x1a, y1a, x2a, y2a = box1
-    x1b, y1b, x2b, y2b = box2
-    x_left = max(x1a, x1b)
-    y_top = max(y1a, y1b)
-    x_right = min(x2a, x2b)
-    y_bottom = min(y2a, y2b)
-    if x_right < x_left or y_bottom < y_top:
-        return 0.0
-    # if box1 is completely within box2
-
-    intersection_area = (x_right - x_left) * (y_bottom - y_top)
-    box1_area = (x2a - x1a) * (y2a - y1a)
-    box2_area = (x2b - x1b) * (y2b - y1b)
-    union_area = box1_area + box2_area - intersection_area
-    overlap_ratio = intersection_area / union_area
-
-    return overlap_ratio
 
 
 def return_inst_data(prediction_data, img, reader, rs, expand=0.0, radius=180,
@@ -447,37 +347,6 @@ def get_comment(ocr_results, dbox, box_expand, include_inside=False, remove_patt
     return comment
 
 
-def overlap_bbox2(obox, dbox, extension, include_inside):
-    # Extract coordinates
-    x1_min, y1_min, x1_max, y1_max = obox
-    x2_min, y2_min, x2_max, y2_max = dbox
-
-    # Extend box2 by the given extension
-    x2_min_ext = max(x2_min - extension, 0)
-    y2_min_ext = max(y2_min - extension, 0)
-    x2_max_ext = x2_max + extension
-    y2_max_ext = y2_max + extension
-
-    print(f"Text box: [{x1_min}, {y1_min}, {x1_max}, {y1_max}]")
-    print(f"Object box: [{x2_min}, {y2_min}, {x2_max}, {y2_max}]")
-    print(f"Extended object box: [{x2_min_ext}, {y2_min_ext}, {x2_max_ext}, {y2_max_ext}]")
-
-    # Check for overlap
-    overlap = (x1_min <= x2_max_ext and x1_max >= x2_min_ext and
-               y1_min <= y2_max_ext and y1_max >= y2_min_ext)
-
-    print(f"Overlap detected: {overlap}")
-
-    if include_inside:
-        return overlap
-    else:
-        # Check if text box is completely inside the un-extended object box
-        inside = (x2_min <= x1_min and x2_max >= x1_max and
-                  y2_min <= y1_min and y2_max >= y1_max)
-        print(f"Text completely inside object box: {inside}")
-        return overlap and not inside
-
-    return False
 
 def overlap_bbox(obox, dbox, extension, include_inside):
     #this fn works as follows
