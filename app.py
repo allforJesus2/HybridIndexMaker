@@ -712,13 +712,10 @@ class ImageViewerApp:
 
     def generate_instrument_count(self):
 
-        compiled_inst_count_xlsx = openpyxl.Workbook()
-        compiled_ws = compiled_inst_count_xlsx.active
-        compiled_ws.title = 'Instrument Count'
-
         ocr_needed = tk.messagebox.askyesno(title='OCR NEEDED?',
                                             message='Do we need to do OCR (for comments)?\nNote if avaliable we use existing results')
-
+        type_needed = tk.messagebox.askyesno(title='TYPE NEEDED?',
+                                            message='Do we need to do instrument types?')
         overwrite = tk.messagebox.askyesno(title='OVERWRITE?',
                                             message='Do you want to overwrite Existing counts?')
 
@@ -729,15 +726,16 @@ class ImageViewerApp:
 
         self.current_image_index = 0
         for i in range(len(self.image_list)):
+            self.current_image_index = i
             self.load_image()
-            self.one_instrument_count(ocr_needed, overwrite)
+            self.one_instrument_count(ocr_needed, overwrite, type_needed=typing_needed)
 
 
     def compile_excels(self):
         #NOW we compile all the xlsxs into one
         compile_excels(self.folder_path, self.folder_path, prefix='Instrument_Count', timestamp=True, recursive=True)
 
-    def one_instrument_count(self, ocr_needed=True, overwrite=True):
+    def one_instrument_count(self, ocr_needed=True, overwrite=True, type_needed=False):
 
         save_location = os.path.join(self.results_folder, "Instrument_Count.xlsx")
         if os.path.exists(save_location) and not overwrite:
@@ -778,15 +776,18 @@ class ImageViewerApp:
         for row, data in enumerate(inst_data, start=1):
             data['pid'] = self.pid
             data['file'] = self.image_path
-
-            if ws['A1'].value is None:  # Check if header doesn't exist
+            if not ws['A1'].value:  # Check if header doesn't exist
+                print('making header')
                 self.create_excel_header(ws, data)
                 row += 1
 
             self.populate_excel_row(ws, data, row)
 
-        inst_count_xlsx.save(save_location)
-        print(f"File saved as: {save_location}")
+        try:
+            inst_count_xlsx.save(save_location)
+            print(f"File saved as: {save_location}")
+        except:
+            print(f"Save to {save_location} failed")
     def append_data_with_xlwings(self):
         # Check if the file exists, if not, create a new workbook
         if not os.path.exists(self.workbook_path):
@@ -919,14 +920,15 @@ class ImageViewerApp:
         :return: None
         """
         header = list(data.keys())
-
+        print(header)
         if isinstance(worksheet, xw.main.Sheet):
             # xlwings worksheet
             for i, column_header in enumerate(header, start=1):
                 worksheet.range((1, i)).value = column_header
-        elif isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
+        elif isinstance(worksheet,  openpyxl.worksheet.worksheet.Worksheet):
             # openpyxl worksheet
-            worksheet.append(header)
+            for col, item in enumerate(header, start=1):
+                worksheet.cell(row=1, column=col, value=item)
         else:
             raise ValueError("Unsupported worksheet type")
 
