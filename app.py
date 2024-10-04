@@ -1,6 +1,6 @@
 import tkinter.messagebox
 import tkinter.simpledialog
-from model_predict_on_mosaic import *
+from model_predict_mosaic import *
 from functions import *
 from tkinter import filedialog, ttk
 from PIL import Image, ImageTk
@@ -14,15 +14,14 @@ import json
 import openpyxl
 from easyocr_mosaic import *
 from convolutioner import ConvolutionReplacer
-import xml.etree.ElementTree as ET
 import re
 from openpyxl.drawing.image import Image as xlImage
 from minscore_edit import SliderApp
 from find_an_instrument import FindAnInstrumentApp
 from console_redirect import *
 import io
-
-
+from tag_label_grouping import GroupInputApp
+from image_editor import ImageEditor
 class AutoScrollbar(ttk.Scrollbar):
     ''' A scrollbar that hides itself if it's not needed.
         Works only if you use the grid geometry manager '''
@@ -116,6 +115,9 @@ class ImageViewerApp:
         self.command_menu.add_command(label="Find an instrument App", command=self.open_FAIA)
         self.command_menu.add_command(label="Open Console Popup", command=self.open_console)
         self.command_menu.add_command(label="Open Page Results folder", command=self.open_page_results)
+        self.command_menu.add_command(label="Image Editor", command=self.open_image_editor)
+
+
         self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
 
         # Create a capture menu
@@ -145,6 +147,7 @@ class ImageViewerApp:
         self.settings_menu.add_command(label="Set min score for instruments", command=self.set_minscore)
         self.settings_menu.add_command(label="Set instrument comment box expand", command=self.set_comment_box_expand)
         self.settings_menu.add_command(label="Set association radius", command=self.set_association_radius)
+        self.settings_menu.add_command(label="Set tag prefix groups", command=self.set_tag_pfx_groups)
         self.settings_menu.add_command(label="Set instrument groups", command=self.catergorize_labels)
         self.settings_menu.add_command(label="Set object min scores", command=self.set_object_scores)
         self.settings_menu.add_command(label="Set object box expand %", command=self.set_object_box_expand)
@@ -220,7 +223,7 @@ class ImageViewerApp:
 
     def initialize_models(self):
         # Initialize instrument and equipment models
-        self.model_inst_path = "models/GWR.pth"
+        self.model_inst_path = "models/vortex_large.pth"
         #self.model_equipment_path = "models/equipment_services_v2.pth"
 
         print('loading models from ', self.model_inst_path)
@@ -306,6 +309,7 @@ class ImageViewerApp:
         self.whole_page_ocr_results = None
         self.reader = easyocr.Reader(['en'])
         self.labels = []
+        self.tag_label_groups = {}
         self.group_inst = []
         self.object_box_expand = 0.0
         self.group_other = []
@@ -595,6 +599,12 @@ class ImageViewerApp:
 
     # endregion
 
+    def set_tag_pfx_groups(self):
+        group_window = tk.Toplevel(self.root)
+        print(self.tag_label_groups)
+        app = GroupInputApp(group_window, self.tag_label_groups)
+        self.tag_label_groups = app.result
+
     def set_nms_threshold(self):
         response = tkinter.simpledialog.askfloat(title='Non-Maximum-Supression',
                                                                prompt='Set NMS overlap threshold (smaller = fewer boxes): ',
@@ -625,6 +635,10 @@ class ImageViewerApp:
     def open_FAIA(self):
         faia_window = tk.Toplevel(self.root)
         FindAnInstrumentApp(faia_window, img_path=self.image_path)
+
+    def open_image_editor(self):
+        image_editor_window = tk.Toplevel(self.root)
+        ImageEditor(image_editor_window, image=self.image_path)
 
     def set_object_scores(self):
         def set_minscores(score_dict):
@@ -724,18 +738,17 @@ class ImageViewerApp:
         if not sure:
             return
 
-        self.current_image_index = 0
         for i in range(len(self.image_list)):
-            self.current_image_index = i
-            self.load_image()
-            self.one_instrument_count(ocr_needed, overwrite, type_needed=typing_needed)
+            self.go_to_page(i)
+            self.one_instrument_count(overwrite=overwrite)
 
 
     def compile_excels(self):
         #NOW we compile all the xlsxs into one
         compile_excels(self.folder_path, self.folder_path, prefix='Instrument_Count', timestamp=True, recursive=True)
 
-    def one_instrument_count(self, ocr_needed=True, overwrite=True, type_needed=False):
+
+    def one_instrument_count(self, overwrite=True):
 
         save_location = os.path.join(self.results_folder, "Instrument_Count.xlsx")
         if os.path.exists(save_location) and not overwrite:
@@ -744,12 +757,6 @@ class ImageViewerApp:
         inst_count_xlsx = openpyxl.Workbook()
         ws = inst_count_xlsx.active
         ws.title = 'Instrument Count'
-
-        if ocr_needed:
-            if self.ocr_results == None:
-                self.get_ocr()
-        else:
-            self.ocr_results = None
 
         img = self.cv2img
 
@@ -770,19 +777,19 @@ class ImageViewerApp:
                                  ocr_results=self.ocr_results, offset=(0,0),
                                  radius=self.association_radius)
 
-        # data = {'tag': tag, 'tag_no': tag_no, 'score': score, 'box': box, 'label': label, 'type': inst_type,
-        #        'comment': comment}
+        print('there are ',len(inst_data),' inst_data items')
 
-        for row, data in enumerate(inst_data, start=1):
+        current_row = 1
+        for data in inst_data:
             data['pid'] = self.pid
             data['file'] = self.image_path
             if not ws['A1'].value:  # Check if header doesn't exist
                 print('making header')
                 self.create_excel_header(ws, data)
-                row += 1
+                current_row += 1
 
-            self.populate_excel_row(ws, data, row)
-
+            self.populate_excel_row(ws, data, current_row)
+            current_row += 1
         try:
             inst_count_xlsx.save(save_location)
             print(f"File saved as: {save_location}")
@@ -839,8 +846,8 @@ class ImageViewerApp:
 
             data['FILE'] = self.image_path
 
-            x1 = self.cropped_x1
-            y1 = self.cropped_y1
+            x1 = min([self.cropped_x1,self.cropped_x2])
+            y1 = min([self.cropped_y1,self.cropped_y2])
 
             list_box = data['box'].tolist()
             int_box = [int(x) for x in list_box]
@@ -1462,6 +1469,7 @@ class ImageViewerApp:
             if os.path.exists(label_path):
                 with open(label_path, "r") as f:
                     self.labels = [x.strip() for x in f.read().split(",")]
+                    self.tag_label_groups = {i: '' for i in self.labels}
                     print(self.labels)
             else:
                 tk.messagebox.showinfo("Load error", f"{label_path} with comma separated labels not found")
@@ -1601,6 +1609,8 @@ class ImageViewerApp:
                 self.capture_pid(cropped_image)
 
                 self.update_data_display()
+
+            self.load_ocr()
 
     def next_image(self):
         self.go_to_page(self.current_image_index + 1)

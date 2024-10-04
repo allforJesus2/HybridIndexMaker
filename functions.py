@@ -75,6 +75,7 @@ def compile_excels(input_folder, output_folder=None, prefix='page', timestamp=Tr
                     output_sheet.append([cell.value for cell in row])
 
     output_workbook.save(output_filename)
+    print('excels compiled to: ', output_filename)
     return output_filename
 
 def pil_to_cv2(pil_image):

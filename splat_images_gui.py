@@ -17,8 +17,9 @@ class SplatImagesGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Splat Images Parameters")
-        self.root.geometry("800x700")
-
+        self.root.geometry("800x900")
+        self.entries = {}
+        self.checkbuttons = {}
         self.create_widgets()
 
     def create_widgets(self):
@@ -101,6 +102,7 @@ class SplatImagesGUI:
             ("NOT Weight:", "0.3"),
             ("Horizontal Flip Probability:", "0.5"),
             ("Vertical Flip Probability:", "0.5"),
+            ("Rotate Probability:","0.5"),
             ("Black Threshold (0-255):", "200"),
             ("Color Probability:", "0.5"),
             ("Min Scale:", "0.8"),
@@ -115,10 +117,14 @@ class SplatImagesGUI:
                     self.labeled_entry(transform_frame, label, default, i))
 
         self.uniform_scale_var = tk.BooleanVar()
-        ttk.Checkbutton(transform_frame, text="Uniform Scale", variable=self.uniform_scale_var).grid(row=len(params), column=0, sticky=tk.W)
+        uniform_scale_cb = ttk.Checkbutton(transform_frame, text="Uniform Scale", variable=self.uniform_scale_var)
+        uniform_scale_cb.grid(row=len(params), column=0, sticky=tk.W)
+        self.checkbuttons['uniform_scale'] = self.uniform_scale_var
 
         self.yolo_var = tk.BooleanVar()
-        ttk.Checkbutton(transform_frame, text="YOLO Format", variable=self.yolo_var).grid(row=len(params), column=1, sticky=tk.W)
+        yolo_cb = ttk.Checkbutton(transform_frame, text="YOLO Format", variable=self.yolo_var)
+        yolo_cb.grid(row=len(params), column=1, sticky=tk.W)
+        self.checkbuttons['yolo'] = self.yolo_var
 
     def create_buttons(self, parent):
         button_frame = ttk.Frame(parent)
@@ -129,18 +135,24 @@ class SplatImagesGUI:
         ttk.Button(button_frame, text="OK", command=self.on_ok).pack(side=tk.RIGHT, padx=(0, 10))
         ttk.Button(button_frame, text="Cancel", command=self.on_cancel).pack(side=tk.RIGHT)
 
+
     def labeled_entry(self, parent, label_text, default_value, row, width=20):
         ttk.Label(parent, text=label_text).grid(row=row, column=0, sticky=tk.W, pady=2)
         entry = ttk.Entry(parent, width=width)
         entry.grid(row=row, column=1, sticky=tk.W, pady=2)
         entry.insert(0, default_value)
+        entry_name = label_to_entry(label_text)
+        self.entries[entry_name] = entry
         return entry
+
 
     def labeled_entry_with_browse(self, parent, label_text, row, width=50):
         ttk.Label(parent, text=label_text).grid(row=row, column=0, sticky=tk.W, pady=2)
         entry = ttk.Entry(parent, width=width)
         entry.grid(row=row, column=1, sticky=tk.W, pady=2)
         ttk.Button(parent, text="Browse", command=lambda: self.select_folder(entry)).grid(row=row, column=2, padx=(5, 0), pady=2)
+        entry_name = label_to_entry(label_text)
+        self.entries[entry_name] = entry
         return entry
 
     def select_folder(self, entry):
@@ -148,6 +160,23 @@ class SplatImagesGUI:
         if folder:
             entry.delete(0, tk.END)
             entry.insert(0, folder)
+
+
+    def get_current_settings(self):
+        settings = {}
+        for name, entry in self.entries.items():
+            settings[name] = entry.get()
+        for name, var in self.checkbuttons.items():
+            settings[name] = var.get()
+        return settings
+
+    def apply_settings(self, settings):
+        for name, value in settings.items():
+            if name in self.entries:
+                self.entries[name].delete(0, tk.END)
+                self.entries[name].insert(0, value)
+            elif name in self.checkbuttons:
+                self.checkbuttons[name].set(value)
 
     def save_settings(self):
         settings = self.get_current_settings()
@@ -164,148 +193,56 @@ class SplatImagesGUI:
                 with open(filename, "r") as f:
                     settings = json.load(f)
                 self.apply_settings(settings)
-                #messagebox.showinfo("Settings Loaded", f"Settings loaded from {filename}")
             except Exception as e:
                 messagebox.showerror("Error Loading Settings", str(e))
 
-    def get_current_settings(self):
-        settings = {}
-        settings["kernel_folder"] = self.kernel_folder_entry.get()
-        settings["output_folder"] = self.output_folder_entry.get()
 
-        settings["output_tile_size_px"] = int(self.output_tile_size_px_entry.get())
-        settings["number_of_output_images"] = int(self.number_of_output_images_entry.get())
-        settings["splats_per_image"] = int(self.splats_per_image_entry.get())
-        settings["splats_variance"] = float(self.splats_variance_entry.get())
-        settings["black_threshold_0_255"] = int(self.black_threshold_0_255_entry.get())
-
-        settings["color_probability"] = float(self.color_probability_entry.get())
-
-        settings["not_weight"] = float(self.not_weight_entry.get())
-        settings["horizontal_flip_probability"] = float(self.horizontal_flip_probability_entry.get())
-        settings["vertical_flip_probability"] = float(self.vertical_flip_probability_entry.get())
-        settings["min_scale"] = float(self.min_scale_entry.get())
-        settings["max_scale"] = float(self.max_scale_entry.get())
-        settings["uniform_scale"] = self.uniform_scale_var.get()
-        settings["yolo"] = self.yolo_var.get()
-        settings["validation_split"] = float(self.validation_split_entry.get())
-
-        return settings
-
-    def apply_settings(self, settings):
-        self.kernel_folder_entry.delete(0, tk.END)
-        self.kernel_folder_entry.insert(0, settings.get("kernel_folder", ""))
-
-        self.output_folder_entry.delete(0, tk.END)
-        self.output_folder_entry.insert(0, settings.get("output_folder", ""))
-
-        self.output_tile_size_px_entry.delete(0, tk.END)
-        self.output_tile_size_px_entry.insert(0, settings.get("output_tile_size_px", "1300"))
-
-        self.number_of_output_images_entry.delete(0, tk.END)
-        self.number_of_output_images_entry.insert(0, settings.get("number_of_output_images", "10"))
-
-        self.splats_per_image_entry.delete(0, tk.END)
-        self.splats_per_image_entry.insert(0, settings.get("splats_per_image", "100"))
-
-        self.splats_variance_entry.delete(0, tk.END)
-        self.splats_variance_entry.insert(0, settings.get("splats_variance", "0.1"))
-
-        self.black_threshold_0_255_entry.delete(0, tk.END)
-        self.black_threshold_0_255_entry.insert(0, settings.get("black_threshold_0_255", "200"))
-
-        self.red_min_entry.delete(0, tk.END)
-        self.red_min_entry.insert(0, settings.get("red_min", "0"))
-        self.red_max_entry.delete(0, tk.END)
-        self.red_max_entry.insert(0, settings.get("red_max", "255"))
-        self.blue_min_entry.delete(0, tk.END)
-        self.blue_min_entry.insert(0, settings.get("blue_min", "0"))
-        self.blue_max_entry.delete(0, tk.END)
-        self.blue_max_entry.insert(0, settings.get("blue_max", "255"))
-        self.green_min_entry.delete(0, tk.END)
-        self.green_min_entry.insert(0, settings.get("green_min", "0"))
-        self.green_max_entry.delete(0, tk.END)
-        self.green_max_entry.insert(0, settings.get("green_max", "30"))
-
-        self.brightness_min_entry.delete(0, tk.END)
-        self.brightness_min_entry.insert(0, settings.get("brightness_min", "0.0"))
-        self.brightness_max_entry.delete(0, tk.END)
-        self.brightness_max_entry.insert(0, settings.get("brightness_max", "1.0"))
-
-        self.color_probability_entry.delete(0, tk.END)
-        self.color_probability_entry.insert(0, settings.get("color_probability", "0.5"))
-
-        self.not_weight_entry.delete(0, tk.END)
-        self.not_weight_entry.insert(0, settings.get("not_weight", "0.3"))
-
-        self.horizontal_flip_probability_entry.delete(0, tk.END)
-        self.horizontal_flip_probability_entry.insert(0, settings.get("horizontal_flip_probability", "0.5"))
-
-        self.vertical_flip_probability_entry.delete(0, tk.END)
-        self.vertical_flip_probability_entry.insert(0, settings.get("vertical_flip_probability", "0.5"))
-
-        self.min_scale_entry.delete(0, tk.END)
-        self.min_scale_entry.insert(0, settings.get("min_scale", "0.8"))
-
-        self.max_scale_entry.delete(0, tk.END)
-        self.max_scale_entry.insert(0, settings.get("max_scale", "1.2"))
-
-        self.uniform_scale_var.set(settings.get("uniform_scale", False))
-        self.yolo_var.set(settings.get("yolo", False))
-
-        self.validation_split_entry.delete(0, tk.END)
-        self.validation_split_entry.insert(0, settings.get("validation_split", "0.1"))
     def on_ok(self):
-
-
-        kf = self.kernel_folder_entry.get()
-        of = self.output_folder_entry.get()
+        settings = self.get_current_settings()
         try:
-            count = int(self.number_of_output_images_entry.get())
-            splats_per_image = int(self.splats_per_image_entry.get())
-            not_weight = float(self.not_weight_entry.get())
+            # Convert settings to appropriate types
+            count = int(settings['number_of_output_images_entry'])
+            splats_per_image = int(settings['splats_per_image_entry'])
+            not_weight = float(settings['not_weight_entry'])
             yolo = self.yolo_var.get()
-            horizontal_flip_p = float(self.horizontal_flip_probability_entry.get())
-            vertical_flip_p = float(self.vertical_flip_probability_entry.get())
-            min_scale = float(self.min_scale_entry.get())
-            max_scale = float(self.max_scale_entry.get())
+            horizontal_flip_p = float(settings['horizontal_flip_probability_entry'])
+            vertical_flip_p = float(settings['vertical_flip_probability_entry'])
+            min_scale = float(settings['min_scale_entry'])
+            max_scale = float(settings['max_scale_entry'])
             uniform_scale = self.uniform_scale_var.get()
-            output_size = int(self.output_tile_size_px_entry.get())
-            black_threshold = int(self.black_threshold_0_255_entry.get())
-
-            brightness_range_min = float(self.brightness_range_min_entry.get())
-            brightness_range_max = float(self.brightness_range_max_entry.get())
-
-            contrast_range_min = float(self.contrast_range_min_entry.get())
-            contrast_range_max = float(self.contrast_range_max_entry.get())
-
-            hue_range_min = int(self.hue_range_min_entry.get())
-            hue_range_max = int(self.hue_range_min_entry.get())
-
-            invert_probability = float(self.invert_probability_entry.get())
-            blur_probability = float(self.blur_probability_entry.get())
-            blur_max = int(self.blur_max_entry.get())
-
-            color_probability = float(self.color_probability_entry.get())
-            splats_variance = float(self.splats_variance_entry.get())
-            validation_split = float(self.validation_split_entry.get())  # Convert to decimal
-
-            bbox_scale_min = float(self.bbox_scale_min_entry.get())
-            bbox_scale_max = float(self.bbox_scale_max_entry.get())
+            output_size = int(settings['output_tile_size_px_entry'])
+            black_threshold = int(settings['black_threshold_0_255_entry'])
+            brightness_range_min = float(settings['brightness_range_min_entry'])
+            brightness_range_max = float(settings['brightness_range_max_entry'])
+            contrast_range_min = float(settings['contrast_range_min_entry'])
+            contrast_range_max = float(settings['contrast_range_max_entry'])
+            hue_range_min = int(settings['hue_range_min_entry'])
+            hue_range_max = int(settings['hue_range_max_entry'])
+            invert_probability = float(settings['invert_probability_entry'])
+            blur_probability = float(settings['blur_probability_entry'])
+            p_rotate = float(settings['rotate_probability_entry'])
+            blur_max = int(settings['blur_max_entry'])
+            color_probability = float(settings['color_probability_entry'])
+            splats_variance = float(settings['splats_variance_entry'])
+            validation_split = float(settings['validation_split_entry'])
+            bbox_scale_min = float(settings['bbox_scale_min_entry'])
+            bbox_scale_max = float(settings['bbox_scale_max_entry'])
 
             # Create Validation subfolder
+            of = settings['output_folder_entry']
             validation_folder = os.path.join(of, "Validation")
             os.makedirs(validation_folder, exist_ok=True)
 
-
-
+            # Generate images
             for i in range(count):
                 print(f'\rGenerating image {i + 1} of {count}', end='')
 
                 is_validation = i < int(count * validation_split)
                 current_output_folder = validation_folder if is_validation else of
 
-                generate_output_image(kf,current_output_folder,
+                generate_output_image(
+                    settings['kernel_folder_entry'],
+                    current_output_folder,
                     output_size=output_size,
                     splats_per_image=splats_per_image,
                     yolo=yolo,
@@ -325,15 +262,14 @@ class SplatImagesGUI:
                     bbox_scale_min=bbox_scale_min,
                     bbox_scale_max=bbox_scale_max,
                     blur_probability=blur_probability,
-                    blur_max=blur_max
+                    blur_max=blur_max,
+                    p_rotate=p_rotate
                 )
 
             os.startfile(of)
-            tk.messagebox.showinfo('DONE',f'Created {count} new images')
+            tk.messagebox.showinfo('DONE', f'Created {count} new images')
         except ValueError:
             messagebox.showerror("Error", "Please enter valid numeric values.")
-
-
     def on_cancel(self):
         self.root.destroy()
 

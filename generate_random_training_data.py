@@ -8,11 +8,17 @@ import cv2
 import glob
 
 def apply_transformations(image, p_mirror_x=0.5, p_mirror_y=0.5, uniform_scale=True, min_scale=0.8, max_scale=1.2,
-                          black_threshold=50, color_probability=0.5):
+                          black_threshold=50, color_probability=0.5, p_rotate=0.5):
     """Apply random transformations to the input image."""
     if color_probability > random.random():
         color = generate_random_color()
         image = replace_black_with_color(image, color, black_threshold)
+
+    # Apply random 90-degree rotation
+    if random.random() < p_rotate:
+        rotation_choices = [Image.ROTATE_90, Image.ROTATE_180, Image.ROTATE_270]
+        rotation = random.choice(rotation_choices)
+        image = image.transpose(rotation)
 
     # Define transformations
     x = random.random()
@@ -213,6 +219,8 @@ def generate_output_image(root_folder, output_folder, **kwargs):
         'uniform_scale': kwargs.get('uniform_scale', False),
         'black_threshold': kwargs.get('black_threshold', 50),
         'color_probability': kwargs.get('color_probability', 0.5),
+        'p_rotate': kwargs.get('p_rotate', 0.5),
+
     }
 
     # New parameter for random canvas color probability

@@ -212,6 +212,12 @@ class ObjectDetectionApp:
         self.learning_rate_entry.insert(0, "0.0005")  # Default value for learning rate
         self.learning_rate_entry.pack(side=tk.LEFT, padx=5)
 
+        gamma_label = tk.Label(hyperparameters_frame, text="LR Decay:")
+        gamma_label.pack(side=tk.LEFT, padx=5)
+        self.gamma_entry = tk.Entry(hyperparameters_frame)
+        self.gamma_entry.insert(0, "0.7")  # Default value for learning rate
+        self.gamma_entry.pack(side=tk.LEFT, padx=5)
+
         # region Test model section
 
         # New section for Test Model
@@ -447,6 +453,8 @@ class ObjectDetectionApp:
         # Get the number of epochs and learning rate from the entry fields
         num_epochs = int(self.epochs_entry.get())
         learning_rate = float(self.learning_rate_entry.get())
+        gamma = float(self.gamma_entry.get())
+
 
         # Create and train the model
         if self.use_yolo:
@@ -494,7 +502,7 @@ class ObjectDetectionApp:
             train_dataset = core.Dataset(images_path, images_path)
             # Load the validation data
             val_dataset = core.Dataset(val_images_path, val_images_path)
-            losses = self.model.fit(train_dataset, val_dataset, epochs=num_epochs, learning_rate=learning_rate)
+            losses = self.model.fit(train_dataset, val_dataset, epochs=num_epochs, learning_rate=learning_rate, gamma=gamma)
             messagebox.showinfo("Training Complete", f"Model training completed successfully. Loss: {losses}")
 
 
@@ -534,6 +542,8 @@ class ObjectDetectionApp:
         # Ask for an image folder to test
         root_path = filedialog.askdirectory(title="Select a folder containing images for testing")
         count = tk.simpledialog.askinteger(title="image count", prompt="Enter the number of images to run inference on: ")
+        min_width = tk.simpledialog.askinteger(title="min image width", prompt="Enter the minimum image width (px): ")
+
         # Get a list of all image files (png and jpg) in the folder and its subfolders
         image_files = []
         for root, dirs, files in os.walk(root_path):
@@ -541,13 +551,28 @@ class ObjectDetectionApp:
                 if file.endswith(('.png', '.jpg')):
                     image_files.append(os.path.join(root, file))
 
-        # Select a random image from the list
-        print('number of images ',len(image_files))
+        print('Number of images:', len(image_files))
         if image_files:
             for i in range(count):
-                random_image_path = random.choice(image_files)
-                print(f"Selected random image: {random_image_path}")
-                self.test_model_mosaic(random_image_path)
+                if not image_files:
+                    print("No more images available.")
+                    break
+
+                random_index = random.randint(0, len(image_files) - 1)
+                random_image_path = image_files[random_index]
+
+                # Check the image width
+                with Image.open(random_image_path) as img:
+                    width, _ = img.size
+
+                if width >= min_width:
+                    print(f"Selected random image: {random_image_path}")
+                    self.test_model_mosaic(random_image_path)
+                else:
+                    print(f"Skipped image (width < {min_width}): {random_image_path}")
+
+                # Remove the processed image from the list
+                image_files.pop(random_index)
         else:
             print("No images found in the selected folder.")
 
@@ -572,7 +597,7 @@ class ObjectDetectionApp:
             # Overlay boxes and labels on the image
             img_with_boxes = self.plot_pic(image, labels, boxes, scores, minscore=minscore)
 
-            output_image_path = "../DetectoGUI/result_image.png"
+            output_image_path = "result_image.png"
             cv2.imwrite(output_image_path, img_with_boxes)
 
             # Open the saved image using the default image viewer
