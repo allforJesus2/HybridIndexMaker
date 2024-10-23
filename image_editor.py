@@ -7,16 +7,15 @@ import os
 
 
 class ImageEditor:
-    def __init__(self, root, image=None):
+    def __init__(self, root, image=None, folder=None):
         self.root = root
         self.root.title("Image Editor")
         self.current_file_path = image
-
+        self.folder_path = folder
         # Image handling variables
         self.original_image = None
         self.display_image = None
         self.photo = None
-        self.current_file_path = None  # Store the path of the loaded image
         self.brightness = 1.0
         self.contrast = 1.0
         self.erosion = 0
@@ -179,9 +178,10 @@ class ImageEditor:
         return Image.fromarray(img_array)
 
     def batch_apply_settings(self):
-        folder_path = filedialog.askdirectory(title="Select Folder Containing Images")
-        if not folder_path:
-            return
+        if not self.folder_path:
+            folder_path = filedialog.askdirectory(title="Select Folder Containing Images")
+            if not folder_path:
+                return
 
         # Get current adjustment values
         brightness = self.brightness_scale.get()
@@ -192,9 +192,9 @@ class ImageEditor:
         processed_count = 0
         error_count = 0
 
-        for filename in os.listdir(folder_path):
+        for filename in os.listdir(self.folder_path):
             if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
-                file_path = os.path.join(folder_path, filename)
+                file_path = os.path.join(self.folder_path, filename)
                 try:
                     img = Image.open(file_path)
 
@@ -211,7 +211,7 @@ class ImageEditor:
                         img = self.apply_morphological_ops(img, erosion, dilation)
 
                     # Save the modified image
-                    output_path = os.path.join(folder_path, filename)
+                    output_path = os.path.join(self.folder_path, filename)
                     img.save(output_path)
                     print(f'done processing {output_path}')
                     processed_count += 1

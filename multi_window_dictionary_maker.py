@@ -26,16 +26,13 @@ class DraggableLabel(tk.Label):
             self.toggle_selection()
             return
 
-        # Find all labels between last selected and current
         all_labels = [w for w in self.parent.winfo_children() if isinstance(w, DraggableLabel)]
         start_idx = all_labels.index(self.parent.last_selected)
         end_idx = all_labels.index(self)
 
-        # Swap if needed to ensure correct order
         if start_idx > end_idx:
             start_idx, end_idx = end_idx, start_idx
 
-        # Select all labels in range
         for label in all_labels[start_idx:end_idx + 1]:
             if not label.selected:
                 label.toggle_selection()
@@ -46,7 +43,6 @@ class DraggableLabel(tk.Label):
 
     def start_drag(self, event):
         if not self.selected:
-            # If clicking an unselected item, clear other selections
             for widget in self.parent.winfo_children():
                 if isinstance(widget, DraggableLabel) and widget.selected:
                     widget.toggle_selection()
@@ -54,16 +50,13 @@ class DraggableLabel(tk.Label):
 
         self.parent.last_selected = self
 
-        # Get all selected items
         selected_items = [w for w in self.parent.winfo_children()
                           if isinstance(w, DraggableLabel) and w.selected]
 
-        # Create drag representation
         self.drag_window = tk.Toplevel()
         self.drag_window.overrideredirect(True)
         self.drag_window.attributes('-alpha', 0.7)
 
-        # Show all selected items in drag window
         for item in selected_items:
             tk.Label(self.drag_window, text=item.cget('text'),
                      bg='lightblue', padx=10, pady=5).pack()
@@ -78,30 +71,33 @@ class DraggableLabel(tk.Label):
 
     def stop_drag(self, event):
         if hasattr(self, 'drag_window'):
-            # Get all selected items
             selected_items = [w.cget('text') for w in self.parent.winfo_children()
                               if isinstance(w, DraggableLabel) and w.selected]
 
             x, y = event.x_root, event.y_root
 
-            # Find if we dropped on any box window
-            for box in BoxWindow.instances:
-                box_x = box.winfo_x()
-                box_y = box.winfo_y()
-                box_width = box.winfo_width()
-                box_height = box.winfo_height()
+            # Get only valid box windows
+            valid_boxes = [box for box in BoxWindow.instances if box.winfo_exists()]
 
-                if (box_x <= x <= box_x + box_width and
-                        box_y <= y <= box_y + box_height):
-                    # Add all selected items to the box
-                    for item in selected_items:
-                        box.add_item(item)
-                    break
+            for box in valid_boxes:
+                try:
+                    box_x = box.winfo_x()
+                    box_y = box.winfo_y()
+                    box_width = box.winfo_width()
+                    box_height = box.winfo_height()
+
+                    if (box_x <= x <= box_x + box_width and
+                            box_y <= y <= box_y + box_height):
+                        for item in selected_items:
+                            box.add_item(item)
+                        break
+                except tk.TclError:
+                    # If we can't get the window info, skip this box
+                    continue
 
             self.drag_window.destroy()
             del self.drag_window
 
-            # Clear selections after drop
             for widget in self.parent.winfo_children():
                 if isinstance(widget, DraggableLabel) and widget.selected:
                     widget.toggle_selection()
@@ -154,10 +150,18 @@ class BoxWindow(tk.Toplevel):
         self.destroy()
 
 
-class MainWindow:
-    def __init__(self, root, input_dict=None):
+class DictionaryBuilder:
+    def __init__(self, root, input_dict=None, labels=None):
         self.root = root
         self.root.title("Dictionary Builder")
+        self.result = None
+        self.running = True
+
+        # Clear any existing BoxWindow instances
+        BoxWindow.instances.clear()
+
+        # Use default labels if none provided
+        self.labels = labels if labels is not None else ['item1', 'item2', 'item3', 'item4', 'item5', 'item6']
 
         control_panel = tk.Frame(root)
         control_panel.pack(fill=tk.X, padx=10, pady=5)
@@ -166,11 +170,12 @@ class MainWindow:
                   command=self.create_new_box).pack(side=tk.LEFT)
         tk.Button(control_panel, text="Get Dictionary",
                   command=self.show_dictionary).pack(side=tk.LEFT, padx=5)
+        tk.Button(control_panel, text="Save and Close",
+                  command=self.save_and_close).pack(side=tk.RIGHT)
 
         self.items_frame = tk.Frame(root)
         self.items_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        # Track last selected item for shift-select
         self.items_frame.last_selected = None
 
         if input_dict:
@@ -187,9 +192,7 @@ class MainWindow:
                 if y > screen_height - 300:
                     break
 
-        items = ['item1', 'item2', 'item3', 'item4', 'item5', 'item6']
-
-        for item in items:
+        for item in self.labels:
             label = DraggableLabel(
                 self.items_frame,
                 text=item,
@@ -202,6 +205,9 @@ class MainWindow:
 
         self.root.bind('<Return>', self.create_new_box_with_enter)
 
+        # Add protocol handler for window close button
+        self.root.protocol("WM_DELETE_WINDOW", self.save_and_close)
+
     def create_new_box(self):
         label = simpledialog.askstring("New Box", "Enter box label:")
         if label:
@@ -211,10 +217,16 @@ class MainWindow:
     def create_new_box_with_enter(self, event):
         self.create_new_box()
 
-    def show_dictionary(self):
+    def get_current_dictionary(self):
         result = {}
-        for box in BoxWindow.instances:
+        # Only include boxes that still exist
+        valid_boxes = [box for box in BoxWindow.instances if box.winfo_exists()]
+        for box in valid_boxes:
             result[box.label] = box.items
+        return result
+
+    def show_dictionary(self):
+        result = self.get_current_dictionary()
 
         result_window = tk.Toplevel(self.root)
         result_window.title("Dictionary Result")
@@ -227,6 +239,30 @@ class MainWindow:
         text_widget.insert('1.0', formatted_dict)
         text_widget.config(state='disabled')
 
+    def save_and_close(self):
+        self.result = self.get_current_dictionary()
+        self.running = False
+        # Close all valid box windows
+        valid_boxes = [box for box in BoxWindow.instances if box.winfo_exists()]
+        for box in valid_boxes:
+            box.destroy()
+        self.root.destroy()
+
+    def run(self):
+        while self.running:
+            try:
+                self.root.update()
+            except tk.TclError:  # Window has been destroyed
+                break
+        return self.result
+
+
+def create_dictionary_builder(input_dict=None, labels=None):
+    root = tk.Tk()
+    app = DictionaryBuilder(root, input_dict, labels)
+    root.geometry("300x400")
+    return app.run()
+
 
 if __name__ == "__main__":
     input_dict = {
@@ -235,7 +271,6 @@ if __name__ == "__main__":
         "Box 3": ["item5", "item6"],
     }
 
-    root = tk.Tk()
-    app = MainWindow(root, input_dict)
-    root.geometry("300x400")
-    root.mainloop()
+    # Example usage:
+    result = create_dictionary_builder(input_dict)
+    print("Resulting dictionary:", result)

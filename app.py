@@ -20,8 +20,8 @@ from minscore_edit import SliderApp
 from find_an_instrument import FindAnInstrumentApp
 from console_redirect import *
 import io
-from tag_label_grouping import GroupInputApp
 from image_editor import ImageEditor
+from multi_window_dictionary_maker import DictionaryBuilder
 class AutoScrollbar(ttk.Scrollbar):
     ''' A scrollbar that hides itself if it's not needed.
         Works only if you use the grid geometry manager '''
@@ -147,7 +147,7 @@ class ImageViewerApp:
         self.settings_menu.add_command(label="Set min score for instruments", command=self.set_minscore)
         self.settings_menu.add_command(label="Set instrument comment box expand", command=self.set_comment_box_expand)
         self.settings_menu.add_command(label="Set association radius", command=self.set_association_radius)
-        self.settings_menu.add_command(label="Set tag prefix groups", command=self.set_tag_pfx_groups)
+        self.settings_menu.add_command(label="Set tag prefix groups", command=self.set_tag_label_groups)
         self.settings_menu.add_command(label="Set instrument groups", command=self.catergorize_labels)
         self.settings_menu.add_command(label="Set object min scores", command=self.set_object_scores)
         self.settings_menu.add_command(label="Set object box expand %", command=self.set_object_box_expand)
@@ -260,13 +260,13 @@ class ImageViewerApp:
         }
 
         self.reader_settings = {
-            "low_text": 0.3,
+            "low_text": 0.4,
             "min_size": 10,
             "ycenter_ths": 0.5,
             "height_ths": 0.5,
-            "width_ths": 6.0,
+            "width_ths": 2.4,
             "add_margin": 0.1,
-            "link_threshold": 0.2,
+            "link_threshold": 0.13,
             "text_threshold": 0.3,
             "mag_ratio": 1.0,
             "allowlist": '',
@@ -309,7 +309,7 @@ class ImageViewerApp:
         self.whole_page_ocr_results = None
         self.reader = easyocr.Reader(['en'])
         self.labels = []
-        self.tag_label_groups = {}
+        self.tag_label_groups = {'FE FIT':'','PCV TCV LCV AV XV HCV FCV FV PV TV LV':'', 'LE LIT LT':'', 'PT PIT PI DPIT':''}
         self.group_inst = []
         self.object_box_expand = 0.0
         self.group_other = []
@@ -599,11 +599,12 @@ class ImageViewerApp:
 
     # endregion
 
-    def set_tag_pfx_groups(self):
+    def set_tag_label_groups(self):
         group_window = tk.Toplevel(self.root)
         print(self.tag_label_groups)
-        app = GroupInputApp(group_window, self.tag_label_groups)
-        self.tag_label_groups = app.result
+        app = DictionaryBuilder(group_window, self.tag_label_groups, self.labels)
+        self.tag_label_groups = app.run()
+        print(self.tag_label_groups)
 
     def set_nms_threshold(self):
         response = tkinter.simpledialog.askfloat(title='Non-Maximum-Supression',
@@ -638,7 +639,7 @@ class ImageViewerApp:
 
     def open_image_editor(self):
         image_editor_window = tk.Toplevel(self.root)
-        ImageEditor(image_editor_window, image=self.image_path)
+        ImageEditor(image_editor_window, folder=self.folder_path, image="ocr_capture.png")
 
     def set_object_scores(self):
         def set_minscores(score_dict):
@@ -767,6 +768,7 @@ class ImageViewerApp:
 
         labels, boxes, scores = model_predict_on_mosaic(img, self.model_inst, threshold=self.nms_threshold)
         results = zip(labels, boxes, scores)
+
         inst_img = plot_pic(img, labels, boxes, scores)
         cv2.imwrite(os.path.join(self.results_folder, 'inst_img.png'), inst_img)
 
@@ -775,9 +777,13 @@ class ImageViewerApp:
                                  min_scores=self.min_scores, expand=self.object_box_expand,
                                  comment_box_expand=self.comment_box_expand,
                                  ocr_results=self.ocr_results, offset=(0,0),
-                                 radius=self.association_radius)
+                                 radius=self.association_radius,
+                                    tag_label_groups=self.tag_label_groups)
 
         print('there are ',len(inst_data),' inst_data items')
+
+        just_lines_img = remove_objects_from_image(img, inst_data, self.ocr_results)
+        cv2.imwrite(os.path.join(self.results_folder, 'blank.png'), just_lines_img)
 
         current_row = 1
         for data in inst_data:
@@ -1353,7 +1359,8 @@ class ImageViewerApp:
             'group_other',
             'comment_box_expand',
             'association_radius',
-            'min_scores'
+            'min_scores',
+            'tag_label_groups',
             # Add any other attribute names you want to save here
         ]
 
@@ -1418,6 +1425,7 @@ class ImageViewerApp:
     def merge_pdfs(self):
         folder_that_has_pdfs = filedialog.askdirectory(title='Folder that has PDFs')
         merge_pdf(folder_that_has_pdfs)
+        self.open_folder(folder_that_has_pdfs)
 
     #def create_ocr_settings_gui(self):
     def shift_pressed(self, event):
@@ -1469,7 +1477,6 @@ class ImageViewerApp:
             if os.path.exists(label_path):
                 with open(label_path, "r") as f:
                     self.labels = [x.strip() for x in f.read().split(",")]
-                    self.tag_label_groups = {i: '' for i in self.labels}
                     print(self.labels)
             else:
                 tk.messagebox.showinfo("Load error", f"{label_path} with comma separated labels not found")
@@ -1513,7 +1520,7 @@ class ImageViewerApp:
         self.capture = capture_type
         self.canvas.itemconfig(self.capture_text, text=self.capture)
 
-    def open_folder(self):
+    def open_folder(self, given_folder=None):
 
         self.initialize_models()
 
@@ -1521,7 +1528,11 @@ class ImageViewerApp:
         def natural_sort_key(s):
             return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', s)]
 
-        self.folder_path = filedialog.askdirectory()
+        if not given_folder:
+            self.folder_path = filedialog.askdirectory()
+        else:
+            self.folder_path = given_folder
+
         if self.folder_path:
             self.image_list = [os.path.join(self.folder_path, f) for f in os.listdir(self.folder_path) if f.endswith(('.png', '.jpg', '.jpeg', '.gif'))]
             # Sort the collected files using the natural sort key function
@@ -1682,7 +1693,8 @@ class ImageViewerApp:
                                           self.instrument_reader_settings, radius=self.association_radius,
                                           min_scores=self.min_scores, expand=self.object_box_expand,
                                           offset=offset, comment_box_expand=self.comment_box_expand, ocr_results=self.ocr_results,
-                                          inst_labels=self.group_inst, other_labels=self.group_other)
+                                          inst_labels=self.group_inst, other_labels=self.group_other,
+                                         tag_label_groups=self.tag_label_groups)
 
             for data in inst_data:
                 print(data)
@@ -1722,6 +1734,7 @@ class ImageViewerApp:
             self.line = ' '.join([box[1] for box in result])
         else:
             print('no result')
+            self.line=''
         self.equipment = None
         if self.show_line:
             self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.line, fill="blue", font=("Courier", 12))

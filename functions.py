@@ -13,7 +13,7 @@ import cv2
 import os
 import torch
 import numpy as np
-
+from new_fns import *
 def compile_excels(input_folder, output_folder=None, prefix='page', timestamp=True, recursive=False):
     """
     Compile multiple Excel files into a single Excel file.
@@ -192,18 +192,21 @@ def pdf2png(pdf_file, target_width):
 
 
 def return_inst_data(prediction_data, img, reader, rs, expand=0.0, radius=180,
-                      inst_labels=None,
-                      other_labels=None,
-                      min_scores=None,
-                      offset=None, ocr_results=None, comment_box_expand=30):
+                     inst_labels=None,
+                     other_labels=None,
+                     min_scores=None,
+                     offset=None, ocr_results=None, comment_box_expand=30,
+                     tag_label_groups=None,
+                     re_line=None):
 
     all_data = []
     group_inst = []
     group_other = []
     got_one = False
 
-    # Separate the groups and extract centers
+    # Separate the groups
     for label, box, score in prediction_data:
+
         try:
             if score < min_scores[label]:
                 continue
@@ -215,15 +218,66 @@ def return_inst_data(prediction_data, img, reader, rs, expand=0.0, radius=180,
         if label in other_labels:
             group_other.append((label, box, score))
 
+    # region make line image
+    # make colors
+    '''
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+    lines = cv2.HoughLinesP(edges, rho, theta, threshold, minLineLength=min_line_length,
+                                 maxLineGap=max_line_gap)
 
+    line_dictionary = {}
+
+    line_groups = group_lines(lines)
+    img_line_groups_removed = white_out_line_groups(img, line_groups, line_thickness=5)
+
+
+    line_texts = get_text_in_ocr_results(re_line, ocr_results)
+
+    for line_group in line_groups:
+
+        for line_text in line_texts:
+            box = line_text[0]
+            if box_intersects_line(box, line_group):
+                if line_dictionary.get(line_text):
+                    line_dictionary[line_text].append(line_group)
+                else:
+                    line_dictionary[line_text] = [line_group]
+
+    # add colors
+    color_dictionary = {}
+    for line_text in line_dictionary:
+        color_dictionary[line_text] = generate_color(line_text)
+
+    image_dictionary = {}
+    for line_text in line_dictionary:
+        one_line_img = place_lines_on_image_and_flood_fill(img_line_groups_removed,
+                                            line_dictionary[line_text],
+                                            color_dictionary[line_text])
+        image_dictionary[line_text] = one_line_img
+    
+    #make single dict
+    line_data = {}
+    for line in line_dictionary:
+        line_data['lines'] = line_dictionary[line]
+        line_data['color'] = color_dictionary[line]
+        line_data['img'] = image_dictionary[line]
+
+    # We then iterate though all the registered lines placing them back on the image one at a time
+    # That line is drawn in with the line color and we use the flood fill algorithm to color the image and assign instruments the line number
+    # end region
+    '''
     for label, box, score in group_inst:
+
+        #lines is simply a list of strings
+        #lines = get_lines_from_box(box, line_data)
 
         tag, tag_no = '', ''
         x_min, y_min, x_max, y_max = map(int, box.tolist())
         inst_center = calculate_center(box)
 
-        x_expand = int((x_max-x_min)*expand/2)
-        y_expand = int((y_max-y_min)*expand/2)
+        x_expand = int((x_max - x_min) * expand / 2)
+        y_expand = int((y_max - y_min) * expand / 2)
 
         crop_img = img[(y_min - y_expand):(y_max + y_expand), (x_min - x_expand):(x_max + x_expand)]
         try:
@@ -241,37 +295,74 @@ def return_inst_data(prediction_data, img, reader, rs, expand=0.0, radius=180,
             tag = results[0][1]
             tag_no = ' '.join([box[1] for box in results[1:]])
 
-        # define inst_type as the closest item in group_other that DOES NOT have the same label
-        inst_type = find_closest_other(inst_center, group_other, label, radius)
+        # Only use tag_label_groups filtering if it's provided and we have a tag
+        valid_types = ['']
+        if tag_label_groups and tag:
+            valid_types = get_valid_types_for_tag(tag, tag_label_groups)
+            print('valid types ', valid_types)
+
+        # If tag_label_groups is None or no valid types were found,
+        # find_closest_other will work like the original version
+        inst_type = find_closest_other(inst_center, group_other, label, radius, valid_types, tag_label_groups)
 
         comment = ''
         offset_tensor = torch.tensor([offset[0], offset[1], offset[0], offset[1]])
         offset_box = box + offset_tensor
         if ocr_results:
             comment = get_comment(ocr_results, offset_box, comment_box_expand)
+
         data = {'tag': tag, 'tag_no': tag_no, 'score': score, 'box': box, 'label': label, 'type': inst_type,
                 'comment': comment}
         all_data.append(data)
 
     return all_data
+def get_valid_types_for_tag(tag, tag_label_groups):
+    # For each key in tag_label_groups, split it into individual tags
+    # and check if our tag starts with any of them
+    for tag_group, valid_types in tag_label_groups.items():
+        tag_prefixes = tag_group.split()
+        if tag in tag_prefixes:
+            return valid_types
+    return None  # Return None if no matching group found
 
+def find_closest_other(inst_center, group_other, current_label, radius, valid_types=[''], tag_label_groups=None):
+    """
+    Find the closest item in group_other that doesn't have the same label and is in valid_types if specified.
 
-def find_closest_other(inst_center, group_other, current_label, radius):
-    """Find the closest item in group_other that doesn't have the same label."""
-    min_distance = radius#float('inf')
+    Args:
+        inst_center: Center coordinates of the current instrument
+        group_other: List of (label, box, score) tuples for other objects
+        current_label: Label of the current instrument to exclude
+        radius: Maximum distance to consider
+        valid_types: Optional list of valid type labels to consider
+    """
+    min_distance = radius
     closest_label = None
+
+
+
     for label, box, score in group_other:
+
         # Skip items with the same label as the current instrument
         if label == current_label:
             continue
+
+        if tag_label_groups:
+            # Skip if we have valid_types and this label isn't in it
+            if valid_types is None:
+                continue
+            print('label ', label)
+            print('valid_types ', valid_types)
+            if label not in valid_types:
+                continue
 
         other_center = calculate_center(box)
         distance = calculate_distance(inst_center, other_center)
         if distance < min_distance:
             min_distance = distance
             closest_label = label
-    return closest_label
 
+    return closest_label
 
 def calculate_center(box):
     """Calculate the center of a box."""
@@ -328,6 +419,28 @@ def plot_pic(img, labels, boxes, scores, size=5, minscore=.5):
     # plt.show()
     return img
 
+def remove_objects_from_image(img, inst_data, ocr_results):
+    # Create a copy of the original image
+    masked_img = img.copy()
+
+    # Process object results
+    for data in inst_data:
+        # Convert box coordinates to integers
+        x1, y1, x2, y2 = map(int, data['box'])
+
+        # Draw a white filled rectangle to cover the object
+        cv2.rectangle(masked_img, (x1, y1), (x2, y2), (255, 255, 255), -1)
+
+    # Process OCR results
+    for result in ocr_results:
+        box = result[0]
+        x1, y1, x2, y2 = int(box[0][0]), int(box[0][1]), int(box[2][0]), int(box[2][1])
+
+        # Draw a white filled rectangle to cover the OCR text
+        cv2.rectangle(masked_img, (x1, y1), (x2, y2), (255, 255, 255), -1)
+
+    return masked_img
+
 def get_comment(ocr_results, dbox, box_expand, include_inside=False, remove_pattern='^$'):
     # dbox is a detecto box
     # obox is an easyOCR box
@@ -346,8 +459,6 @@ def get_comment(ocr_results, dbox, box_expand, include_inside=False, remove_patt
         if overlap_bbox(text_box, object_box, box_expand, include_inside):
             comment += f" {word}"
     return comment
-
-
 
 def overlap_bbox(obox, dbox, extension, include_inside):
     #this fn works as follows
