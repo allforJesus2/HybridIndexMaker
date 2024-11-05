@@ -60,7 +60,6 @@ def make_yolo_annotation_from_xml(xml_file, class_list, output_dir):
 
     return output_file
 
-
 def create_yolov8_dataset(source_dir, output_dir, class_list, train_ratio=0.8):
     print('Make sure labels are loaded')
 
@@ -121,10 +120,6 @@ def create_yolov8_dataset(source_dir, output_dir, class_list, train_ratio=0.8):
     print(f"data.yaml file created at {os.path.join(output_dir, 'data.yaml')}")
 
     print("YOLOv8 dataset created successfully")
-
-
-# Usage
-
 
 class ObjectDetectionApp:
     def __init__(self, root):

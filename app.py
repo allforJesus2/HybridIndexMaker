@@ -22,6 +22,8 @@ from console_redirect import *
 import io
 from image_editor import ImageEditor
 from multi_window_dictionary_maker import DictionaryBuilder
+from detecto_gui import ObjectDetectionApp
+
 class AutoScrollbar(ttk.Scrollbar):
     ''' A scrollbar that hides itself if it's not needed.
         Works only if you use the grid geometry manager '''
@@ -86,19 +88,26 @@ class ImageViewerApp:
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(label="Open Folder", command=self.open_folder)
         self.file_menu.add_command(label="Open Current Image", command=self.open_image_path)
+        self.file_menu.add_command(label="Load Object detection model", command=self.load_pretrained_model)
 
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
+
+        # Create App menu
+        self.app_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.app_menu.add_command(label="Image Editor", command=self.open_image_editor)
+        self.app_menu.add_command(label="Find an instrument App", command=self.open_FAIA)
+        self.app_menu.add_command(label="Train Object Detection Model", command=self.open_detecto_gui)
+        self.app_menu.add_command(label="Open Console Popup", command=self.open_console)
+
+        self.menu_bar.add_cascade(label="Apps", menu=self.app_menu)
 
         # Create a commands menu
         self.command_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.command_menu.add_command(label="Create images from PDF", command=self.open_pdf2png)
-        self.command_menu.add_command(label="Load Object detection model", command=self.load_pretrained_model)
         self.command_menu.add_command(label="Merge pdfs", command=self.merge_pdfs)
-        self.command_menu.add_command(label="Swap services", command=self.swap_services)
-        self.command_menu.add_command(label="Clear instrument group", command=self.clear_instrument_group)
+
         self.command_menu.add_command(label="Load a Tag Correction Function", command=self.load_correct_fn)
         self.command_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
-        self.command_menu.add_command(label="Toggle show line text", command=self.toggle_show_line_text)
         self.command_menu.add_command(label="Live Write Mode", command=lambda: self.set_write_mode('xlwings'))
         self.command_menu.add_command(label="Silent/quick Write Mode", command=lambda: self.set_write_mode('openpyxl'))
         self.command_menu.add_command(label="Save workbook", command=self.save_workbook)
@@ -106,16 +115,13 @@ class ImageViewerApp:
         self.command_menu.add_command(label="Generate type xlsx via convolution", command=self.create_tag_type_xlsx)
         self.command_menu.add_command(label="Generate All pages Instrument Count", command=self.generate_instrument_count)
         self.command_menu.add_command(label="Generate Single Page Instrument Count", command=self.one_instrument_count)
-        self.command_menu.add_command(label="Compile Instrument counts", command=self.compile_excels)
+        #self.command_menu.add_command(label="Compile Instrument counts", command=self.compile_excels)
         self.command_menu.add_command(label="Generate Filename PID xlsx", command=self.make_pid_page_xlsx)
         self.command_menu.add_command(label="Test instrument Model on Image", command=self.test_model_mosaic)
 
         self.command_menu.add_command(label="Get OCR", command=self.get_ocr)
         self.command_menu.add_command(label="Get all pages OCR", command=self.get_all_ocr)
-        self.command_menu.add_command(label="Find an instrument App", command=self.open_FAIA)
-        self.command_menu.add_command(label="Open Console Popup", command=self.open_console)
         self.command_menu.add_command(label="Open Page Results folder", command=self.open_page_results)
-        self.command_menu.add_command(label="Image Editor", command=self.open_image_editor)
 
 
         self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
@@ -129,6 +135,10 @@ class ImageViewerApp:
         self.capture_menu.add_command(label="Capture Service In", command=lambda: self.set_capture('service_in'))
         self.capture_menu.add_command(label="Capture Service Out", command=lambda: self.set_capture('service_out'))
         self.capture_menu.add_command(label="Capture comment", command=lambda: self.set_capture('comment'))
+
+        self.capture_menu.add_command(label="Swap services", command=self.swap_services)
+        self.capture_menu.add_command(label="Clear instrument group", command=self.clear_instrument_group)
+
         self.menu_bar.add_cascade(label="Capture", menu=self.capture_menu)
 
         # Create page menu
@@ -140,18 +150,17 @@ class ImageViewerApp:
 
         # settings menu
         self.settings_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.settings_menu.add_command(label="Open instrument reader settings",
+        self.settings_menu.add_command(label="Instrument Reader Settings",
                                        command=self.open_instrument_reader_settings)
-        self.settings_menu.add_command(label="Open general reader settings", command=self.open_general_reader_settings)
+        self.settings_menu.add_command(label="General Reader Settings", command=self.open_general_reader_settings)
+        self.settings_menu.add_command(label="instrument comment box expand", command=self.set_comment_box_expand)
+        self.settings_menu.add_command(label="Tag Prefix Groups", command=self.set_tag_label_groups)
+        self.settings_menu.add_command(label="Instrument Groups", command=self.catergorize_labels)
+        self.settings_menu.add_command(label="Group Association radius", command=self.set_association_radius)
+        self.settings_menu.add_command(label="Object Min Scores", command=self.set_object_scores)
+        self.settings_menu.add_command(label="object box expand %", command=self.set_object_box_expand)
+        self.settings_menu.add_command(label="NMS threshold", command=self.set_nms_threshold)
         self.settings_menu.add_command(label="Save Settings", command=self.save_attributes)
-        self.settings_menu.add_command(label="Set min score for instruments", command=self.set_minscore)
-        self.settings_menu.add_command(label="Set instrument comment box expand", command=self.set_comment_box_expand)
-        self.settings_menu.add_command(label="Set association radius", command=self.set_association_radius)
-        self.settings_menu.add_command(label="Set tag prefix groups", command=self.set_tag_label_groups)
-        self.settings_menu.add_command(label="Set instrument groups", command=self.catergorize_labels)
-        self.settings_menu.add_command(label="Set object min scores", command=self.set_object_scores)
-        self.settings_menu.add_command(label="Set object box expand %", command=self.set_object_box_expand)
-        self.settings_menu.add_command(label="Set NMS threshold", command=self.set_nms_threshold)
 
 
         self.menu_bar.add_cascade(label="Settings", menu=self.settings_menu)
@@ -309,7 +318,7 @@ class ImageViewerApp:
         self.whole_page_ocr_results = None
         self.reader = easyocr.Reader(['en'])
         self.labels = []
-        self.tag_label_groups = {'FE FIT':'','PCV TCV LCV AV XV HCV FCV FV PV TV LV':'', 'LE LIT LT':'', 'PT PIT PI DPIT':''}
+        self.tag_label_groups = {"FE FIT": ["CORIOLIS", "MAGNETIC", "PITOT", "TURBINE", "ULTRASONIC", "VORTEX"], "PCV TCV LCV SDV AV XV HCV FCV FV PV TV LV": ["BALL", "BUTTERFLY", "DIAPHRAM", "GATE", "GLOBE", "KNIFE", "PLUG", "VBALL"], "LE LIT LT": ["GWR", "PR"], "PT PIT PI DPIT": ["SEAL"]}
         self.group_inst = []
         self.object_box_expand = 0.0
         self.group_other = []
@@ -319,7 +328,6 @@ class ImageViewerApp:
         self.nms_threshold = 0.5
         self.inst_data = []
         self.active_inst_box_count = 0
-        self.show_line = False
         self.write_mode = 'xlwings'
         self.equipment_defined = None
         self.crop_start = None
@@ -373,6 +381,9 @@ class ImageViewerApp:
         self.shift_held = False
         self.root.bind('<KeyPress-Shift_L>', self.shift_pressed)
         self.root.bind('<KeyRelease-Shift_L>', self.shift_released)
+
+        self.root.bind('<KeyPress-Control_L>', self.ctrl_pressed)
+        self.root.bind('<KeyRelease-Control_L>', self.ctrl_released)
     # endregion
 
     # region image scrolling and zooming
@@ -547,8 +558,17 @@ class ImageViewerApp:
             x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
             if self.crop_rectangle and self.crop_rectangle not in self.persistent_boxes:
                 self.canvas.delete(self.crop_rectangle)
-            self.crop_rectangle = self.canvas.create_rectangle(self.crop_start[0], self.crop_start[1], x, y,
-                                                               outline='orange')
+            #self.crop_rectangle = self.canvas.create_rectangle(self.crop_start[0], self.crop_start[1], x, y,
+            #                                                   outline='orange')
+
+        self.crop_rectangle = self.canvas.create_rectangle(
+            self.crop_start[0],
+            self.crop_start[1],
+            x, y,
+            outline='orange',
+            fill='orange',
+            stipple='gray25'  # Creates a checkerboard pattern for transparency effect
+        )
 
     def end_crop(self, event):
         if self.crop_start:
@@ -558,12 +578,14 @@ class ImageViewerApp:
     def perform_crop(self):
         if self.crop_start and self.crop_end:
             # Convert canvas coordinates to image coordinates
-            x1, y1 = self.canvas_to_image(self.crop_start[0], self.crop_start[1])
-            x2, y2 = self.canvas_to_image(self.crop_end[0], self.crop_end[1])
-
+            x1c, y1c = self.canvas_to_image(self.crop_start[0], self.crop_start[1])
+            x2c, y2c = self.canvas_to_image(self.crop_end[0], self.crop_end[1])
             # Ensure x1 < x2 and y1 < y2
-            x1, x2 = min(x1, x2), max(x1, x2)
-            y1, y2 = min(y1, y2), max(y1, y2)
+            x1 = min(x1c, x2c)
+            x2 = max(x1c, x2c)
+
+            y1 = min(y1c, y2c)
+            y2 = max(y1c, y2c)
 
             self.cropped_x1 = x1
             self.cropped_y1 = y1
@@ -633,6 +655,9 @@ class ImageViewerApp:
     def open_page_results(self):
         os.startfile(self.results_folder)
 
+    def open_detecto_gui(self):
+        detecto_gui_window = tk.Toplevel(self.root)
+        ObjectDetectionApp(detecto_gui_window)
     def open_FAIA(self):
         faia_window = tk.Toplevel(self.root)
         FindAnInstrumentApp(faia_window, img_path=self.image_path)
@@ -723,8 +748,6 @@ class ImageViewerApp:
     def set_association_radius(self):
         self.association_radius = tk.simpledialog.askfloat(prompt="Enter Object association radius", title="Enter association ( Radius", initialvalue=self.association_radius)
 
-
-
     def generate_instrument_count(self):
 
         ocr_needed = tk.messagebox.askyesno(title='OCR NEEDED?',
@@ -743,11 +766,13 @@ class ImageViewerApp:
             self.go_to_page(i)
             self.one_instrument_count(overwrite=overwrite)
 
+        self.compile_excels()
 
     def compile_excels(self):
         #NOW we compile all the xlsxs into one
-        compile_excels(self.folder_path, self.folder_path, prefix='Instrument_Count', timestamp=True, recursive=True)
-
+        output_file = compile_excels(self.folder_path, self.folder_path, prefix='Instrument_Count', timestamp=True, recursive=True)
+        if tk.messagebox.askyesno('Open Results?'):
+            os.startfile(output_file)
 
     def one_instrument_count(self, overwrite=True):
 
@@ -821,7 +846,6 @@ class ImageViewerApp:
                 'LINE/EQUIP': '',
                 'INPUT COMMENT': '',
                 'FILE': '',
-                'OFFSET BOX': ''
             })
 
             last_row = ws.range('A1').expand('down').last_cell.row
@@ -852,14 +876,6 @@ class ImageViewerApp:
 
             data['FILE'] = self.image_path
 
-            x1 = min([self.cropped_x1,self.cropped_x2])
-            y1 = min([self.cropped_y1,self.cropped_y2])
-
-            list_box = data['box'].tolist()
-            int_box = [int(x) for x in list_box]
-            offset_box = [int_box[0] + x1, int_box[1] + y1, int_box[2] + x1, int_box[3] + y1]
-
-            data['OFFSET BOX'] = offset_box
             if ws.range('A1').value is None:  # Check if header doesn't exist
                 self.create_excel_header(ws, data)
 
@@ -926,7 +942,8 @@ class ImageViewerApp:
 
     def create_excel_header(self, worksheet, data):
         """
-        Create a header row in the given worksheet based on the keys in the data dictionary.
+        Create a header row in the given worksheet based on the keys in the data dictionary
+        and format entire columns as text.
 
         :param worksheet: The worksheet to add the header to (either xlwings or openpyxl worksheet)
         :param data: A dictionary containing the data structure
@@ -934,14 +951,25 @@ class ImageViewerApp:
         """
         header = list(data.keys())
         print(header)
+
         if isinstance(worksheet, xw.main.Sheet):
             # xlwings worksheet
             for i, column_header in enumerate(header, start=1):
-                worksheet.range((1, i)).value = column_header
-        elif isinstance(worksheet,  openpyxl.worksheet.worksheet.Worksheet):
+                cell = worksheet.range((1, i))
+                cell.value = column_header
+                # Format entire column as text
+                column_range = worksheet.range((1, i)).expand('down').entire_column
+                column_range.number_format = '@'
+
+        elif isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
             # openpyxl worksheet
             for col, item in enumerate(header, start=1):
-                worksheet.cell(row=1, column=col, value=item)
+                cell = worksheet.cell(row=1, column=col, value=item)
+                # Format entire column as text
+                column_letter = openpyxl.utils.get_column_letter(col)
+                for cell in worksheet[column_letter]:
+                    cell.number_format = '@'
+
         else:
             raise ValueError("Unsupported worksheet type")
 
@@ -1008,7 +1036,6 @@ class ImageViewerApp:
                 cell.value = str(int_list)
             else:
                 cell.value = str(value)
-
 
     def make_pid_page_xlsx(self):
 
@@ -1233,8 +1260,6 @@ class ImageViewerApp:
 
             expand_columns_to_fit(self.output_sheet)
 
-
-
     def page_setup(self):
 
         if self.model_equip == None:
@@ -1318,9 +1343,6 @@ class ImageViewerApp:
     def set_write_mode(self, mode):
         self.write_mode = mode
 
-    def toggle_show_line_text(self):
-        self.show_line = not self.show_line
-
     def show_keybindings(self):
         keybindings = """
         n/N: Next image
@@ -1336,6 +1358,8 @@ class ImageViewerApp:
         v/V: Vote to normalize tag numbers
         s/S: Swap Services
         g/G: Set Comment
+        left shift: add to service with formatting
+        left ctrl: add to service
         """
         tk.messagebox.showinfo("Keybindings", keybindings)
 
@@ -1352,7 +1376,6 @@ class ImageViewerApp:
             'current_image_index',
             'instrument_reader_settings',
             'reader_settings',
-            'show_line',
             'model_inst_path',
             'labels',
             'group_inst',
@@ -1433,6 +1456,13 @@ class ImageViewerApp:
 
     def shift_released(self, event):
         self.shift_held = False
+
+    def ctrl_pressed(self, event):
+        self.ctrl_held = True
+
+    def ctrl_released(self, event):
+        self.ctrl_held = False
+
     def update_capture_text(self, event):
         # Update the text's position to follow the cursor
         #x, y = event.x, event.y
@@ -1505,7 +1535,12 @@ class ImageViewerApp:
 
         if pdf_file and width:
             # Call the pdf2png function with the selected PDF file and DPI value
-            pdf2png(pdf_file, width)
+            images_folder = pdf2png(pdf_file, width)
+        else:
+            return
+
+        if tk.messagebox.askyesno("Open the project?"):
+            self.open_folder(images_folder)
 
     def clear_instrument_group(self):
 
@@ -1539,8 +1574,10 @@ class ImageViewerApp:
             self.image_list.sort(key=natural_sort_key)
             self.current_image_index = 0
             self.load_attributes()
-            self.go_to_page(self.current_image_index)
-
+            if self.current_image_index:
+                self.go_to_page(self.current_image_index)
+            else:
+                self.go_to_page(1)
     def append_data_to_excel(self):
         try:
             # Example data to append
@@ -1574,7 +1611,7 @@ class ImageViewerApp:
 
         # Iterate over the sliced list and change the outline color of each item
         for box_id in active_boxes:
-            self.canvas.itemconfig(box_id, outline='#87CEEB')
+            self.canvas.itemconfig(box_id, outline='#87CEEB', fill='#87CEEB')
 
         self.active_inst_box_count = 0
         self.inst_data = []
@@ -1736,8 +1773,6 @@ class ImageViewerApp:
             print('no result')
             self.line=''
         self.equipment = None
-        if self.show_line:
-            self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.line, fill="blue", font=("Courier", 12))
 
     def capture_equipment(self, cropped_image):
         # Perform actions for capturing line
@@ -1762,12 +1797,19 @@ class ImageViewerApp:
 
         current_value = getattr(self, target_attribute)
 
-        if not self.shift_held:
-            setattr(self, target_attribute, just_text)
-        else:
+        if self.shift_held:
+
             ms = merge_common_substrings(current_value, just_text)
 
             setattr(self, target_attribute, ms)
+
+        elif self.ctrl_held:
+            ms = current_value + " " + just_text
+            setattr(self, target_attribute, ms)
+
+        else:
+            setattr(self, target_attribute, just_text)
+
 
         self.equipment = None
 

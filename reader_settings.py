@@ -4,6 +4,7 @@ import cv2
 import easyocr
 from PIL import Image, ImageTk
 
+
 class SetReaderSettings:
     def __init__(self, root, imgpath, reader, reader_settings=None, callback=None):
         self.root = root
@@ -12,6 +13,14 @@ class SetReaderSettings:
         self.callback = callback
         self.original_image = Image.open(self.imgpath)
         self.original_image_ratio = self.original_image.width / self.original_image.height
+        self.resize_id = None
+
+        # Set initial window size
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        initial_width = min(1200, screen_width - 100)  # Max width 1200 or screen width - 100
+        initial_height = min(800, screen_height - 100)  # Max height 800 or screen height - 100
+        root.geometry(f"{initial_width}x{initial_height}")
 
         self.reader_settings = reader_settings or {
             "low_text": 0.3,
@@ -24,25 +33,39 @@ class SetReaderSettings:
             "text_threshold": 0.3,
             "mag_ratio": 3.0,
             "allowlist": '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ()',
-            "decoder": 'beamsearch'
+            "decoder": 'beamsearch',
+            "batch_size": 1
         }
 
         self.setup_ui()
+        # Bind resize event after initial setup
+        self.root.bind('<Configure>', self.on_window_resize)
 
     def setup_ui(self):
-        controls_frame = tk.Frame(self.root)
-        controls_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Main container with weights
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(1, weight=1)
+
+        # Controls frame (left side) - fixed width
+        controls_frame = tk.Frame(self.root, width=400)
+        controls_frame.grid(row=0, column=0, sticky='ns', padx=5, pady=5)
+        controls_frame.grid_propagate(False)  # Prevent frame from shrinking
 
         self.create_entry_fields(controls_frame)
         self.create_sliders(controls_frame)
         self.create_save_button(controls_frame)
 
+        # Image frame (right side)
         image_frame = tk.Frame(self.root)
-        image_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        image_frame.grid(row=0, column=1, sticky='nsew', padx=5, pady=5)
+        image_frame.grid_rowconfigure(0, weight=1)
+        image_frame.grid_columnconfigure(0, weight=1)
 
         self.image_label = tk.Label(image_frame)
-        self.image_label.pack(fill=tk.BOTH, expand=True)
+        self.image_label.grid(row=0, column=0, sticky='nsew')
 
+        # Initial update
+        self.root.update_idletasks()
         self.update_image()
 
     def create_entry_fields(self, parent):
@@ -67,13 +90,13 @@ class SetReaderSettings:
             ("height_ths", "Height THS", 0, 1, 0.01),
             ("width_ths", "Width THS", 0, 10, 0.1),
             ("add_margin", "Add Margin", -1, 1, 0.01),
-            ("scale_factor", "Scale Factor", 0.1, 5, 0.1)
+            ("batch_size", "Batch Size", 1, 100, 1)
         ]
 
         for setting, label, from_, to, resolution in slider_settings:
             slider = Scale(parent, from_=from_, to=to, orient=HORIZONTAL, resolution=resolution,
-                           length=400, label=label)
-            slider.set(self.reader_settings.get(setting, 1.0))  # Default to 1.0 for scale_factor
+                           length=300, label=label)  # Reduced length to fit fixed width
+            slider.set(self.reader_settings[setting])
             slider.pack(fill=tk.X)
             slider.bind("<ButtonRelease-1>", lambda event, s=setting: self.on_slider_release(event, s))
             setattr(self, setting, slider)
@@ -99,19 +122,50 @@ class SetReaderSettings:
                 "mag_ratio": self.mag_ratio.get(),
                 "allowlist": self.allowlist_entry.get(),
                 "decoder": self.decoder_entry.get(),
+                "batch_size": int(self.batch_size.get())
             }
             self.callback(self.reader_settings)
+
+    def on_window_resize(self, event):
+        # Only process resize events from the root window
+        if event.widget == self.root and self.resize_id is None:
+            # Schedule new resize event
+            self.resize_id = self.root.after(50, self.delayed_resize)
+
+    def delayed_resize(self):
+        self.resize_id = None
+        self.update_image()
 
     def update_image(self):
         results = self.reader.readtext(
             self.imgpath,
             detail=1,
-            **{k: v for k, v in self.reader_settings.items() if k != 'scale_factor'}
+            **self.reader_settings
         )
 
         img = cv2.imread(self.imgpath)
-        scale_factor = self.reader_settings.get('scale_factor', 1.0)
-        scaled_img = cv2.resize(img, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_AREA)
+
+        # Get the available space in the window
+        window_width = self.image_label.winfo_width()
+        window_height = self.image_label.winfo_height()
+
+        # Ensure minimum dimensions
+        window_width = max(window_width, 100)
+        window_height = max(window_height, 100)
+
+        # Calculate scaling factors
+        width_ratio = window_width / img.shape[1]
+        height_ratio = window_height / img.shape[0]
+
+        # Use the smaller ratio to maintain aspect ratio
+        scale_factor = min(width_ratio, height_ratio)
+
+        # Calculate new dimensions
+        new_width = int(img.shape[1] * scale_factor)
+        new_height = int(img.shape[0] * scale_factor)
+
+        # Resize the image
+        scaled_img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
 
         final_results = []
 
@@ -125,7 +179,7 @@ class SetReaderSettings:
                 rotated_results = self.reader.readtext(
                     rotated_img,
                     detail=1,
-                    **{k: v for k, v in self.reader_settings.items() if k != 'scale_factor'}
+                    **self.reader_settings
                 )
 
                 for rotated_item in rotated_results:

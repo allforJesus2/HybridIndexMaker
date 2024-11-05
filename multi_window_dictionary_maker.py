@@ -76,7 +76,6 @@ class DraggableLabel(tk.Label):
 
             x, y = event.x_root, event.y_root
 
-            # Get only valid box windows
             valid_boxes = [box for box in BoxWindow.instances if box.winfo_exists()]
 
             for box in valid_boxes:
@@ -92,7 +91,6 @@ class DraggableLabel(tk.Label):
                             box.add_item(item)
                         break
                 except tk.TclError:
-                    # If we can't get the window info, skip this box
                     continue
 
             self.drag_window.destroy()
@@ -103,6 +101,59 @@ class DraggableLabel(tk.Label):
                     widget.toggle_selection()
 
 
+class EditableLabel(tk.Frame):
+    def __init__(self, parent, text, font=None, command=None, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.command = command
+        self.text = text
+
+        # Label widget
+        self.label = tk.Label(
+            self,
+            text=text,
+            font=font,
+            cursor="hand2"
+        )
+        self.label.pack(side=tk.LEFT, padx=(5, 0))
+
+        # Entry widget (initially hidden)
+        self.entry = tk.Entry(self, font=font)
+        self.entry.insert(0, text)
+
+        # Bind events
+        self.label.bind('<Button-1>', self.start_edit)
+        self.entry.bind('<Return>', self.finish_edit)
+        self.entry.bind('<FocusOut>', self.finish_edit)
+        self.entry.bind('<Escape>', self.cancel_edit)
+
+    def start_edit(self, event=None):
+        self.label.pack_forget()
+        self.entry.delete(0, tk.END)
+        self.entry.insert(0, self.label.cget('text'))
+        self.entry.pack(side=tk.LEFT, padx=(5, 0))
+        self.entry.focus_set()
+        self.entry.select_range(0, tk.END)
+
+    def finish_edit(self, event=None):
+        if not self.entry.winfo_ismapped():
+            return
+        new_text = self.entry.get().strip()
+        if new_text and new_text != self.text:
+            self.label.config(text=new_text)
+            self.text = new_text
+            if self.command:
+                self.command(new_text)
+        self.entry.pack_forget()
+        self.label.pack(side=tk.LEFT, padx=(5, 0))
+
+    def cancel_edit(self, event=None):
+        self.entry.pack_forget()
+        self.label.pack(side=tk.LEFT, padx=(5, 0))
+
+    def get(self):
+        return self.text
+
+
 class BoxWindow(tk.Toplevel):
     instances = []
 
@@ -110,12 +161,24 @@ class BoxWindow(tk.Toplevel):
         super().__init__(parent)
         BoxWindow.instances.append(self)
 
+        self.parent = parent
         self.label = label
         self.title(f"Box: {label}")
         self.geometry(f"300x300+{x}+{y}")
         self.attributes('-topmost', True)
 
-        tk.Label(self, text=label, font=('Arial', 12, 'bold')).pack(pady=5)
+        # Create header frame
+        self.header_frame = tk.Frame(self)
+        self.header_frame.pack(fill=tk.X, pady=5)
+
+        # Create editable label
+        self.label_widget = EditableLabel(
+            self.header_frame,
+            text=label,
+            font=('Arial', 12, 'bold'),
+            command=self.on_label_change
+        )
+        self.label_widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.items_frame = tk.Frame(self)
         self.items_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -123,6 +186,15 @@ class BoxWindow(tk.Toplevel):
         self.items = items if items else []
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.update_items_display()
+
+    def on_label_change(self, new_label):
+        old_label = self.label
+        self.label = new_label
+        self.title(f"Box: {new_label}")
+
+        # Update the title in any parent references (like dictionaries)
+        if hasattr(self.parent, 'update_box_label'):
+            self.parent.update_box_label(old_label, new_label)
 
     def add_item(self, item):
         if item not in self.items:
@@ -157,11 +229,12 @@ class DictionaryBuilder:
         self.result = None
         self.running = True
 
-        # Clear any existing BoxWindow instances
         BoxWindow.instances.clear()
 
-        # Use default labels if none provided
         self.labels = labels if labels is not None else ['item1', 'item2', 'item3', 'item4', 'item5', 'item6']
+
+        # Store the original input dictionary
+        self.current_dict = input_dict.copy() if input_dict else {}
 
         control_panel = tk.Frame(root)
         control_panel.pack(fill=tk.X, padx=10, pady=5)
@@ -204,22 +277,25 @@ class DictionaryBuilder:
             label.pack(fill=tk.X, pady=2)
 
         self.root.bind('<Return>', self.create_new_box_with_enter)
-
-        # Add protocol handler for window close button
         self.root.protocol("WM_DELETE_WINDOW", self.save_and_close)
+
+    def update_box_label(self, old_label, new_label):
+        """Update the dictionary when a box label is changed"""
+        if old_label in self.current_dict:
+            self.current_dict[new_label] = self.current_dict.pop(old_label)
 
     def create_new_box(self):
         label = simpledialog.askstring("New Box", "Enter box label:")
         if label:
             x, y = pyautogui.position()
             BoxWindow(self.root, label, x, y)
+            self.current_dict[label] = []
 
     def create_new_box_with_enter(self, event):
         self.create_new_box()
 
     def get_current_dictionary(self):
         result = {}
-        # Only include boxes that still exist
         valid_boxes = [box for box in BoxWindow.instances if box.winfo_exists()]
         for box in valid_boxes:
             result[box.label] = box.items
@@ -242,7 +318,6 @@ class DictionaryBuilder:
     def save_and_close(self):
         self.result = self.get_current_dictionary()
         self.running = False
-        # Close all valid box windows
         valid_boxes = [box for box in BoxWindow.instances if box.winfo_exists()]
         for box in valid_boxes:
             box.destroy()
@@ -252,7 +327,7 @@ class DictionaryBuilder:
         while self.running:
             try:
                 self.root.update()
-            except tk.TclError:  # Window has been destroyed
+            except tk.TclError:
                 break
         return self.result
 
@@ -271,6 +346,5 @@ if __name__ == "__main__":
         "Box 3": ["item5", "item6"],
     }
 
-    # Example usage:
     result = create_dictionary_builder(input_dict)
     print("Resulting dictionary:", result)

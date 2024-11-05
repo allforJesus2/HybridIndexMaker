@@ -4,6 +4,7 @@ from tkinter import filedialog, colorchooser, ttk
 from os import startfile
 import math
 from PIL import Image, ImageDraw, ImageTk, ImageFont
+from tkinter import filedialog, colorchooser, ttk, messagebox
 
 
 class FindAnInstrumentApp:
@@ -11,121 +12,273 @@ class FindAnInstrumentApp:
         self.root = root
         root.title("FAIA (find an instrument app)")
 
-        # Add current_index to track accumulated index across images
+        # Initialize tracking variables
         self.current_index = 0
-
-        # Store the current image
         self.current_image = None
+        self.region_windows = []  # List to keep track of region windows
+        self.region_images = []
+        # Create main frames for better organization
+        self.input_frame = tk.Frame(root)
+        self.controls_frame = tk.Frame(root)
+        self.options_frame = tk.Frame(root)
 
+        # === Input Frame ===
         # Combined input section
-        self.combined_label = tk.Label(root, text="Combined Path and Tensor:")
-        self.combined_entry = tk.Text(root, height=5, width=70)
+        tk.Label(self.input_frame, text="Combined Path and Tensor:").pack(anchor='w', padx=10, pady=(10, 0))
+        self.combined_entry = tk.Text(self.input_frame, height=5, width=70)
+        self.combined_entry.pack(fill='x', padx=10, pady=5)
 
-        # Create a frame for the parse buttons
-        self.parse_buttons_frame = tk.Frame(root)
-        self.parse_button = tk.Button(self.parse_buttons_frame, text="Parse Input and Draw Indicators", command=self.parse_combined_input)
-        self.parse_regions_button = tk.Button(self.parse_buttons_frame, text="Parse Input and See Regions",
-                                              command=self.parse_and_show_regions)
+        # Parse buttons frame
+        parse_buttons_frame = tk.Frame(self.input_frame)
+        tk.Button(parse_buttons_frame, text="Parse Input and Draw Indicators",
+                  command=self.parse_combined_input).pack(side=tk.LEFT, padx=5)
+        tk.Button(parse_buttons_frame, text="Parse Input and See Regions",
+                  command=self.parse_and_show_regions).pack(side=tk.LEFT, padx=5)
+        #tk.Button(parse_buttons_frame, text="Reset Index",
+        #          command=self.reset_index).pack(side=tk.LEFT, padx=5)
+        parse_buttons_frame.pack(pady=10)
 
-        # Add reset index button
-        self.reset_index_button = tk.Button(self.parse_buttons_frame, text="Reset Index", command=self.reset_index)
+        # Image path section
+        path_frame = tk.Frame(self.input_frame)
+        tk.Label(path_frame, text="Image Path:").pack(side=tk.LEFT, padx=(10, 5))
+        self.image_path_entry = tk.Entry(path_frame, width=50)
+        self.image_path_entry.pack(side=tk.LEFT, padx=5)
+        self.image_path_entry.insert(tk.END, img_path)
+        tk.Button(path_frame, text="Browse",
+                  command=self.browse_image).pack(side=tk.LEFT, padx=5)
+        path_frame.pack(fill='x', pady=10)
 
-        # Original widgets
-        self.image_path_label = tk.Label(root, text="Image Path:")
-        self.image_path_entry = tk.Entry(root, width=50)
-        self.browse_button = tk.Button(root, text="Browse", command=self.browse_image)
+        # Output directory section
+        output_frame = tk.Frame(self.input_frame)
+        tk.Label(output_frame, text="Output Directory:").pack(side=tk.LEFT, padx=(10, 5))
+        self.output_dir_entry = tk.Entry(output_frame, width=50)
+        self.output_dir_entry.pack(side=tk.LEFT, padx=5)
+        tk.Button(output_frame, text="Browse",
+                  command=self.browse_output_dir).pack(side=tk.LEFT, padx=5)
+        output_frame.pack(fill='x', pady=10)
 
-        self.coords_label = tk.Label(root, text="Coordinates ([x1, y1, x2, y2], one per line):")
-        self.coords_text = tk.Text(root, height=10, width=30)
+        # === Controls Frame ===
+        # Coordinates and labels section
+        coords_frame = tk.Frame(self.controls_frame)
 
-        # Add label type selection
-        self.label_type_label = tk.Label(root, text="Label Type:")
+        # Coordinates input
+        coords_left_frame = tk.Frame(coords_frame)
+        tk.Label(coords_left_frame, text="Coordinates ([x1, y1, x2, y2], one per line):").pack(anchor='w')
+        self.coords_text = tk.Text(coords_left_frame, height=10, width=30)
+        self.coords_text.pack(pady=5)
+        coords_left_frame.pack(side=tk.LEFT, padx=10)
+
+        # Label options
+        label_frame = tk.Frame(coords_frame)
+        tk.Label(label_frame, text="Label Type:").pack(anchor='w')
         self.label_type_combo = tk.StringVar()
-        self.label_type_combobox = ttk.Combobox(root, textvariable=self.label_type_combo,
+        self.label_type_combobox = ttk.Combobox(label_frame, textvariable=self.label_type_combo,
                                                 values=["Index", "Coordinates", "Custom"],
                                                 state='readonly')
-        self.label_type_combobox.current(0)
+        self.label_type_combobox.pack(pady=5)
+        self.label_type_combo.set("Index")
 
-        # Add custom label input
-        self.custom_labels_label = tk.Label(root, text="Custom Labels (one per line):")
-        self.custom_labels_text = tk.Text(root, height=10, width=20)
+        tk.Label(label_frame, text="Custom Labels (one per line):").pack(anchor='w', pady=(10, 0))
+        self.custom_labels_text = tk.Text(label_frame, height=10, width=20)
+        self.custom_labels_text.pack(pady=5)
+        label_frame.pack(side=tk.LEFT, padx=10)
 
-        self.color_label = tk.Label(root, text="Color:")
+        coords_frame.pack(pady=10)
+
+        # === Options Frame ===
+        # Visual options
+        options_top_frame = tk.Frame(self.options_frame)
+
+        # Color selection
+        color_frame = tk.Frame(options_top_frame)
+        tk.Label(color_frame, text="Color:").pack(side=tk.LEFT, padx=5)
         self.color_combo = tk.StringVar()
-        self.color_combobox = ttk.Combobox(root, textvariable=self.color_combo,
-                                           values=["Red", "HotPink", "Green", "LawnGreen", "LimeGreen", "GreenYellow",
-                                                   "Blue", "Orange", "Yellow"],
-                                           state='readonly')
-        self.color_combobox.current(0)
+        self.color_combobox = ttk.Combobox(color_frame, textvariable=self.color_combo,
+                                           values=["Red", "HotPink", "Green", "LawnGreen", "LimeGreen",
+                                                   "GreenYellow", "Blue", "Orange", "Yellow"],
+                                           state='readonly', width=15)
+        self.color_combobox.pack(side=tk.LEFT)
+        self.color_combo.set("Red")
+        color_frame.pack(side=tk.LEFT, padx=10)
 
-        # Region size inputs
-        self.region_frame = tk.Frame(root)
-        self.region_width_label = tk.Label(self.region_frame, text="Region Width:")
-        self.region_width_entry = tk.Entry(self.region_frame, width=10)
-        self.region_width_entry.insert(0, "200")
-        self.region_height_label = tk.Label(self.region_frame, text="Height:")
-        self.region_height_entry = tk.Entry(self.region_frame, width=10)
-        self.region_height_entry.insert(0, "200")
-
-        # See Region button
-        self.see_region_button = tk.Button(self.region_frame, text="See Region", command=self.show_region)
-
-        # Indicator type dropdown
-        self.indicator_label = tk.Label(root, text="Indicator Type:")
+        # Indicator type selection
+        indicator_frame = tk.Frame(options_top_frame)
+        tk.Label(indicator_frame, text="Indicator Type:").pack(side=tk.LEFT, padx=5)
         self.indicator_combo = tk.StringVar()
-        self.indicator_combobox = ttk.Combobox(root, textvariable=self.indicator_combo,
+        self.indicator_combobox = ttk.Combobox(indicator_frame, textvariable=self.indicator_combo,
                                                values=["Square", "Circle", "Crosshair", "Corner Lines"],
-                                               state='readonly')
-        self.indicator_combobox.current(0)
+                                               state='readonly', width=15)
+        self.indicator_combobox.pack(side=tk.LEFT)
+        self.indicator_combo.set("Square")
+        indicator_frame.pack(side=tk.LEFT, padx=10)
 
-        self.thickness_label = tk.Label(root, text="Line Thickness:")
-        self.thickness_entry = tk.Entry(root, width=10)
-        self.thickness_entry.insert(tk.END, '5')
+        # Line thickness and Draw button frame
+        thickness_frame = tk.Frame(options_top_frame)
+        tk.Label(thickness_frame, text="Line Thickness:").pack(side=tk.LEFT, padx=5)
+        self.thickness_entry = tk.Entry(thickness_frame, width=5)
+        self.thickness_entry.insert(0, '5')
+        self.thickness_entry.pack(side=tk.LEFT)
 
-        self.apply_button = tk.Button(root, text="Draw Indicators", command=self.draw_indicators)
+        # Draw button immediately after line thickness
+        tk.Button(thickness_frame, text="Draw Indicators",
+                  command=self.draw_indicators).pack(side=tk.LEFT, padx=20)
 
-        # Layout - Combined input section
-        self.combined_label.grid(row=0, column=0, padx=10, pady=10)
-        self.combined_entry.grid(row=0, column=1, columnspan=2, padx=10, pady=10)
+        thickness_frame.pack(side=tk.LEFT, padx=10)
+        options_top_frame.pack(pady=10)
 
-        # Layout - Parse buttons
-        self.parse_buttons_frame.grid(row=0, column=3, padx=10, pady=10)
-        self.parse_button.pack(side=tk.LEFT, padx=5)
-        self.parse_regions_button.pack(side=tk.LEFT, padx=5)
-        self.reset_index_button.pack(side=tk.LEFT, padx=5)  # Add reset button to layout
+        # Region options
+        region_frame = tk.Frame(self.options_frame)
+        tk.Label(region_frame, text="Region Width:").pack(side=tk.LEFT, padx=5)
+        self.region_width_entry = tk.Entry(region_frame, width=10)
+        self.region_width_entry.insert(0, "200")
+        self.region_width_entry.pack(side=tk.LEFT)
 
-        # Rest of the layout remains the same...
-        self.image_path_label.grid(row=1, column=0, padx=10, pady=10)
-        self.image_path_entry.grid(row=1, column=1, padx=10, pady=10)
-        self.browse_button.grid(row=1, column=2, padx=10, pady=10)
-        self.image_path_entry.insert(tk.END, img_path)
+        tk.Label(region_frame, text="Height:").pack(side=tk.LEFT, padx=5)
+        self.region_height_entry = tk.Entry(region_frame, width=10)
+        self.region_height_entry.insert(0, "200")
+        self.region_height_entry.pack(side=tk.LEFT)
 
-        self.coords_label.grid(row=2, column=0, padx=10, pady=10)
-        self.coords_text.grid(row=2, column=1, rowspan=3, padx=10, pady=10)
+        tk.Button(region_frame, text="See Region",
+                  command=self.show_region).pack(side=tk.LEFT, padx=20)
 
-        self.label_type_label.grid(row=2, column=2, padx=10, pady=10)
-        self.label_type_combobox.grid(row=2, column=3, padx=10, pady=10)
+        # Add Close All Windows button
+        tk.Button(region_frame, text="Close All Windows",
+                  command=self.close_all_windows).pack(side=tk.LEFT, padx=20)
+        # Add Save All Windows button
+        tk.Button(region_frame, text="Save All Windows",
+                  command=self.save_all_windows).pack(side=tk.LEFT, padx=20)
+        region_frame.pack(pady=10)
 
-        self.custom_labels_label.grid(row=3, column=2, padx=10, pady=10)
-        self.custom_labels_text.grid(row=3, column=3, rowspan=2, padx=10, pady=10)
+        # Pack main frames
+        self.input_frame.pack(fill='x', padx=10, pady=5)
+        self.controls_frame.pack(fill='x', padx=10, pady=5)
+        self.options_frame.pack(fill='x', padx=10, pady=5)
 
-        self.color_label.grid(row=5, column=0, padx=10, pady=10)
-        self.color_combobox.grid(row=5, column=1, padx=10, pady=10)
 
-        self.region_frame.grid(row=6, column=0, columnspan=4, pady=10)
-        self.region_width_label.pack(side=tk.LEFT, padx=5)
-        self.region_width_entry.pack(side=tk.LEFT, padx=5)
-        self.region_height_label.pack(side=tk.LEFT, padx=5)
-        self.region_height_entry.pack(side=tk.LEFT, padx=5)
-        self.see_region_button.pack(side=tk.LEFT, padx=20)
+    def browse_output_dir(self):
+        """Browse for output directory"""
+        dir_path = filedialog.askdirectory(title="Select Output Directory")
+        if dir_path:
+            self.output_dir_entry.delete(0, tk.END)
+            self.output_dir_entry.insert(tk.END, dir_path)
 
-        self.indicator_label.grid(row=7, column=0, padx=10, pady=10)
-        self.indicator_combobox.grid(row=7, column=1, padx=10, pady=10)
+    def get_output_directory(self, image_path):
+        """Get the output directory, creating it if necessary"""
+        # Check if custom output directory is specified
+        custom_dir = self.output_dir_entry.get().strip()
+        if custom_dir:
+            output_dir = custom_dir
+        else:
+            # Use default "Images with Indicators" in parent directory
+            parent_dir = os.path.dirname(image_path)
+            output_dir = os.path.join(parent_dir, "Images with Indicators")
 
-        self.thickness_label.grid(row=8, column=0, padx=10, pady=10)
-        self.thickness_entry.grid(row=8, column=1, padx=10, pady=10)
+        # Create directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        return output_dir
 
-        self.apply_button.grid(row=9, columnspan=4, pady=20)
+    def save_all_windows(self):
+        """Save all opened region windows as PNG files"""
+        if not self.region_windows or not self.region_images:
+            tk.messagebox.showinfo("Info", "No region windows to save!")
+            return
+
+        # Ask user for save directory
+        save_dir = filedialog.askdirectory(title="Select Directory to Save Images")
+        if not save_dir:  # User cancelled
+            return
+
+        # Create a base filename from the original image
+        base_filename = os.path.splitext(os.path.basename(self.image_path_entry.get()))[0]
+
+        # Save each region image
+        for i, image in enumerate(self.region_images):
+            if image:
+                # Create filename with index
+                filename = f"{base_filename}_region_{i + 1}.png"
+                filepath = os.path.join(save_dir, filename)
+
+                # Save the image
+                try:
+                    image.save(filepath, "PNG")
+                except Exception as e:
+                    tk.messagebox.showerror("Error", f"Failed to save region {i + 1}: {str(e)}")
+
+        tk.messagebox.showinfo("Success", f"Saved {len(self.region_images)} region images to {save_dir}")
+
+    def show_region(self):
+        try:
+            # Get the current image path
+            image_path = self.image_path_entry.get().strip()
+            if not image_path or not os.path.exists(image_path):
+                print("Please load an image first")
+                return
+
+            # Get the selected coordinates
+            coords_text = self.coords_text.get("1.0", tk.END).strip()
+            if not coords_text:
+                print("Please enter coordinates first")
+                return
+
+            # Get region size
+            region_width = int(self.region_width_entry.get())
+            region_height = int(self.region_height_entry.get())
+
+            # Open the image
+            img = Image.open(image_path)
+
+            # Clear previous region images
+            self.region_images.clear()
+
+            # Process coordinates
+            coords_lines = coords_text.split('\n')
+            for coords_str in coords_lines:
+                if coords_str.startswith('tensor'):
+                    remove = ['(', ')', '[', ']', ' ', 'tensor']
+                    for rm in remove:
+                        coords_str = coords_str.replace(rm, '')
+                    coords = list(map(round, map(float, coords_str.split(','))))
+                else:
+                    coords = list(map(int, coords_str.strip('[]').split(',')))
+
+                # Calculate the center of the bounding box
+                center_x = (coords[0] + coords[2]) // 2
+                center_y = (coords[1] + coords[3]) // 2
+
+                # Calculate crop coordinates
+                left = max(0, center_x - region_width // 2)
+                top = max(0, center_y - region_height // 2)
+                right = min(img.width, left + region_width)
+                bottom = min(img.height, top + region_height)
+
+                # Crop the region
+                region = img.crop((left, top, right, bottom))
+                self.region_images.append(region)  # Store the region image
+
+                # Create a new window for this region
+                region_window = tk.Toplevel(self.root)
+                self.region_windows.append(region_window)
+                filename = os.path.basename(image_path)
+                region_window.title(f"{filename} - Region at {coords}")
+
+                # Convert PIL image to PhotoImage
+                photo = ImageTk.PhotoImage(region)
+
+                # Create label and display image
+                label = tk.Label(region_window, image=photo)
+                label.image = photo  # Keep a reference!
+                label.pack()
+
+        except Exception as e:
+            print(f"Error showing region: {e}")
+
+    def close_all_windows(self):
+        """Close all opened region windows"""
+        for window in self.region_windows:
+            if window.winfo_exists():  # Check if window still exists
+                window.destroy()
+        self.region_windows.clear()  # Clear the list after closing all windows
+        self.region_images.clear()  # Clear the stored images
 
     def reset_index(self):
         """Reset the current index to 0"""
@@ -209,67 +362,6 @@ class FindAnInstrumentApp:
 
         except Exception as e:
             print(f"Error parsing combined input: {e}")
-    def show_region(self):
-        try:
-            # Get the current image path
-            image_path = self.image_path_entry.get().strip()
-            if not image_path or not os.path.exists(image_path):
-                print("Please load an image first")
-                return
-
-            # Get the selected coordinates
-            coords_text = self.coords_text.get("1.0", tk.END).strip()
-            if not coords_text:
-                print("Please enter coordinates first")
-                return
-
-            # Get region size
-            region_width = int(self.region_width_entry.get())
-            region_height = int(self.region_height_entry.get())
-
-            # Open the image
-            img = Image.open(image_path)
-
-            # Process coordinates
-            coords_lines = coords_text.split('\n')
-            for coords_str in coords_lines:
-                if coords_str.startswith('tensor'):
-                    remove = ['(', ')', '[', ']', ' ', 'tensor']
-                    for rm in remove:
-                        coords_str = coords_str.replace(rm, '')
-                    coords = list(map(round, map(float, coords_str.split(','))))
-                else:
-                    coords = list(map(int, coords_str.strip('[]').split(',')))
-
-                # Calculate the center of the bounding box
-                center_x = (coords[0] + coords[2]) // 2
-                center_y = (coords[1] + coords[3]) // 2
-
-                # Calculate crop coordinates
-                left = max(0, center_x - region_width // 2)
-                top = max(0, center_y - region_height // 2)
-                right = min(img.width, left + region_width)
-                bottom = min(img.height, top + region_height)
-
-                # Crop the region
-                region = img.crop((left, top, right, bottom))
-
-                # Create a new window for this region
-                region_window = tk.Toplevel(self.root)
-                filename = os.path.basename(image_path)
-                region_window.title(f"{filename} - Region at {coords}")
-
-                # Convert PIL image to PhotoImage
-                photo = ImageTk.PhotoImage(region)
-
-                # Create label and display image
-                label = tk.Label(region_window, image=photo)
-                label.image = photo  # Keep a reference!
-                label.pack()
-
-        except Exception as e:
-            print(f"Error showing region: {e}")
-
 
     def draw_crosshair(self, draw, bbox, color, thickness):
         x1, y1, x2, y2 = bbox
@@ -323,6 +415,7 @@ class FindAnInstrumentApp:
                      outline=color, width=thickness)
 
     def parse_combined_input(self):
+        self.reset_index()
         combined_text = self.combined_entry.get("1.0", tk.END).strip()
         try:
             path_tensors = {}
@@ -381,6 +474,10 @@ class FindAnInstrumentApp:
             thickness = int(self.thickness_entry.get())
             indicator_type = self.indicator_combobox.get()
 
+            if not image_path:
+                messagebox.showerror("Error", "Please select an image file.")
+                return
+
             img = Image.open(image_path)
             draw = ImageDraw.Draw(img)
 
@@ -406,12 +503,18 @@ class FindAnInstrumentApp:
                 label = self.get_label_for_box(i, coords, custom_labels)
                 self.draw_label(draw, coords, label, color)
 
-            modified_image = os.path.basename(image_path)
-            # Save and display modified image
-            img.save(modified_image)
-            startfile(modified_image)
+            # Get output directory and save the image
+            output_dir = self.get_output_directory(image_path)
+            filename = os.path.basename(image_path)
+            modified_image_path = os.path.join(output_dir, filename)
+
+            img.save(modified_image_path)
+            startfile(modified_image_path)
+
+
         except Exception as e:
-            print(f"An error occurred: {e}")
+            messagebox.showerror("Error", f"An error occurred: {str(e)}")
+
 
 # Example usage
 if __name__ == "__main__":

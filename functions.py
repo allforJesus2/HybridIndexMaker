@@ -189,7 +189,7 @@ def pdf2png(pdf_file, target_width):
         png_file = os.path.join(folder_name, f"page_{page.number + 1}.png")
         pix.save(png_file)
         print(png_file)
-
+    return folder_name
 
 def return_inst_data(prediction_data, img, reader, rs, expand=0.0, radius=180,
                      inst_labels=None,
@@ -311,7 +311,7 @@ def return_inst_data(prediction_data, img, reader, rs, expand=0.0, radius=180,
         if ocr_results:
             comment = get_comment(ocr_results, offset_box, comment_box_expand)
 
-        data = {'tag': tag, 'tag_no': tag_no, 'score': score, 'box': box, 'label': label, 'type': inst_type,
+        data = {'tag': tag, 'tag_no': tag_no, 'score': score, 'box': offset_box, 'label': label, 'type': inst_type,
                 'comment': comment}
         all_data.append(data)
 
@@ -1153,7 +1153,7 @@ def update_groups(labels, group_inst, group_other, root, callback=None):
             listbox_labels.insert(tk.END, item)
 
     # Group Inst column
-    ttk.Label(inst_frame, text="Group Inst").pack(pady=(0, 5))
+    ttk.Label(inst_frame, text="Group Capture").pack(pady=(0, 5))
     listbox_inst = tk.Listbox(inst_frame, selectmode=tk.MULTIPLE)
     listbox_inst.pack(fill=tk.BOTH, expand=True)
 
