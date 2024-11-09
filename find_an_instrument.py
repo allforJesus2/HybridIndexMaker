@@ -1,11 +1,11 @@
 import os.path
 import tkinter as tk
-from tkinter import filedialog, colorchooser, ttk
 from os import startfile
 import math
 from PIL import Image, ImageDraw, ImageTk, ImageFont
 from tkinter import filedialog, colorchooser, ttk, messagebox
-
+import time
+import threading
 
 class FindAnInstrumentApp:
     def __init__(self, root, img_path=''):
@@ -13,64 +13,64 @@ class FindAnInstrumentApp:
         root.title("FAIA (find an instrument app)")
 
         # Initialize tracking variables
+        self.cycling = False
+        self.cycle_thread = None
         self.current_index = 0
         self.current_image = None
-        self.region_windows = []  # List to keep track of region windows
+        self.region_windows = []
         self.region_images = []
-        # Create main frames for better organization
-        self.input_frame = tk.Frame(root)
-        self.controls_frame = tk.Frame(root)
-        self.options_frame = tk.Frame(root)
 
-        # === Input Frame ===
-        # Combined input section
-        tk.Label(self.input_frame, text="Combined Path and Tensor:").pack(anchor='w', padx=10, pady=(10, 0))
-        self.combined_entry = tk.Text(self.input_frame, height=5, width=70)
-        self.combined_entry.pack(fill='x', padx=10, pady=5)
+        # Create main frames with clear separation
+        self.file_frame = tk.LabelFrame(root, text="File Management", padx=10, pady=5)
+        self.input_frame = tk.LabelFrame(root, text="Input Data", padx=10, pady=5)
+        self.visualization_frame = tk.LabelFrame(root, text="Visualization Options", padx=10, pady=5)
+        self.region_frame = tk.LabelFrame(root, text="Region Management", padx=10, pady=5)
 
-        # Parse buttons frame
-        parse_buttons_frame = tk.Frame(self.input_frame)
-        tk.Button(parse_buttons_frame, text="Parse Input and Draw Indicators",
-                  command=self.parse_combined_input).pack(side=tk.LEFT, padx=5)
-        tk.Button(parse_buttons_frame, text="Parse Input and See Regions",
-                  command=self.parse_and_show_regions).pack(side=tk.LEFT, padx=5)
-        #tk.Button(parse_buttons_frame, text="Reset Index",
-        #          command=self.reset_index).pack(side=tk.LEFT, padx=5)
-        parse_buttons_frame.pack(pady=10)
-
-        # Image path section
-        path_frame = tk.Frame(self.input_frame)
-        tk.Label(path_frame, text="Image Path:").pack(side=tk.LEFT, padx=(10, 5))
+        # === File Management Frame ===
+        # Image path selection
+        path_frame = tk.Frame(self.file_frame)
+        tk.Label(path_frame, text="Image Path:").pack(side=tk.LEFT)
         self.image_path_entry = tk.Entry(path_frame, width=50)
         self.image_path_entry.pack(side=tk.LEFT, padx=5)
         self.image_path_entry.insert(tk.END, img_path)
-        tk.Button(path_frame, text="Browse",
-                  command=self.browse_image).pack(side=tk.LEFT, padx=5)
-        path_frame.pack(fill='x', pady=10)
+        tk.Button(path_frame, text="Browse", command=self.browse_image).pack(side=tk.LEFT, padx=5)
+        path_frame.pack(fill='x', pady=5)
 
-        # Output directory section
-        output_frame = tk.Frame(self.input_frame)
-        tk.Label(output_frame, text="Output Directory:").pack(side=tk.LEFT, padx=(10, 5))
+        # Output directory selection
+        output_frame = tk.Frame(self.file_frame)
+        tk.Label(output_frame, text="Output Directory:").pack(side=tk.LEFT)
         self.output_dir_entry = tk.Entry(output_frame, width=50)
         self.output_dir_entry.pack(side=tk.LEFT, padx=5)
-        tk.Button(output_frame, text="Browse",
-                  command=self.browse_output_dir).pack(side=tk.LEFT, padx=5)
-        output_frame.pack(fill='x', pady=10)
+        tk.Button(output_frame, text="Browse", command=self.browse_output_dir).pack(side=tk.LEFT, padx=5)
+        output_frame.pack(fill='x', pady=5)
 
-        # === Controls Frame ===
-        # Coordinates and labels section
-        coords_frame = tk.Frame(self.controls_frame)
+        # === Input Data Frame ===
+        # Combined input section
+        tk.Label(self.input_frame, text="Combined Path and Tensor:").pack(anchor='w')
+        self.combined_entry = tk.Text(self.input_frame, height=5, width=70)
+        self.combined_entry.pack(fill='x', pady=5)
 
-        # Coordinates input
-        coords_left_frame = tk.Frame(coords_frame)
-        tk.Label(coords_left_frame, text="Coordinates ([x1, y1, x2, y2], one per line):").pack(anchor='w')
-        self.coords_text = tk.Text(coords_left_frame, height=10, width=30)
+        # Parse buttons
+        parse_buttons_frame = tk.Frame(self.input_frame)
+        tk.Button(parse_buttons_frame, text="Parse & Draw Indicators",
+                  command=self.parse_combined_input).pack(side=tk.LEFT, padx=5)
+        tk.Button(parse_buttons_frame, text="Parse & Show Regions",
+                  command=self.parse_and_show_regions).pack(side=tk.LEFT, padx=5)
+        parse_buttons_frame.pack(pady=5)
+
+        # Coordinate input and labeling options
+        coords_frame = tk.Frame(self.input_frame)
+
+        # Left side - coordinates
+        coords_left = tk.Frame(coords_frame)
+        tk.Label(coords_left, text="Coordinates ([x1, y1, x2, y2]):").pack(anchor='w')
+        self.coords_text = tk.Text(coords_left, height=8, width=30)
         self.coords_text.pack(pady=5)
-        coords_left_frame.pack(side=tk.LEFT, padx=10)
+        coords_left.pack(side=tk.LEFT, padx=10)
 
-        # Label options
+        # Right side - labels
         label_frame = tk.Frame(coords_frame)
-        tk.Label(label_frame, text="Label Type:").pack(anchor='w')
+        tk.Label(label_frame, text="Label Options:").pack(anchor='w')
         self.label_type_combo = tk.StringVar()
         self.label_type_combobox = ttk.Combobox(label_frame, textvariable=self.label_type_combo,
                                                 values=["Index", "Coordinates", "Custom"],
@@ -78,82 +78,147 @@ class FindAnInstrumentApp:
         self.label_type_combobox.pack(pady=5)
         self.label_type_combo.set("Index")
 
-        tk.Label(label_frame, text="Custom Labels (one per line):").pack(anchor='w', pady=(10, 0))
-        self.custom_labels_text = tk.Text(label_frame, height=10, width=20)
+        tk.Label(label_frame, text="Custom Labels:").pack(anchor='w')
+        self.custom_labels_text = tk.Text(label_frame, height=5, width=20)
         self.custom_labels_text.pack(pady=5)
         label_frame.pack(side=tk.LEFT, padx=10)
 
-        coords_frame.pack(pady=10)
+        coords_frame.pack(pady=5)
 
-        # === Options Frame ===
-        # Visual options
-        options_top_frame = tk.Frame(self.options_frame)
+        # === Visualization Options Frame ===
+        options_frame = tk.Frame(self.visualization_frame)
 
+        # Visual style options
+        style_frame = tk.Frame(options_frame)
         # Color selection
-        color_frame = tk.Frame(options_top_frame)
-        tk.Label(color_frame, text="Color:").pack(side=tk.LEFT, padx=5)
+        tk.Label(style_frame, text="Color:").pack(side=tk.LEFT)
         self.color_combo = tk.StringVar()
-        self.color_combobox = ttk.Combobox(color_frame, textvariable=self.color_combo,
-                                           values=["Red", "HotPink", "Green", "LawnGreen", "LimeGreen",
-                                                   "GreenYellow", "Blue", "Orange", "Yellow"],
-                                           state='readonly', width=15)
-        self.color_combobox.pack(side=tk.LEFT)
+        self.color_combobox = ttk.Combobox(style_frame, textvariable=self.color_combo,
+                                           values=["Red", "HotPink", "Green", "LawnGreen", "Blue", "Orange", "Yellow"],
+                                           state='readonly', width=10)
+        self.color_combobox.pack(side=tk.LEFT, padx=5)
         self.color_combo.set("Red")
-        color_frame.pack(side=tk.LEFT, padx=10)
 
-        # Indicator type selection
-        indicator_frame = tk.Frame(options_top_frame)
-        tk.Label(indicator_frame, text="Indicator Type:").pack(side=tk.LEFT, padx=5)
+        # Indicator type
+        tk.Label(style_frame, text="Type:").pack(side=tk.LEFT, padx=(10, 0))
         self.indicator_combo = tk.StringVar()
-        self.indicator_combobox = ttk.Combobox(indicator_frame, textvariable=self.indicator_combo,
+        self.indicator_combobox = ttk.Combobox(style_frame, textvariable=self.indicator_combo,
                                                values=["Square", "Circle", "Crosshair", "Corner Lines"],
-                                               state='readonly', width=15)
-        self.indicator_combobox.pack(side=tk.LEFT)
+                                               state='readonly', width=10)
+        self.indicator_combobox.pack(side=tk.LEFT, padx=5)
         self.indicator_combo.set("Square")
-        indicator_frame.pack(side=tk.LEFT, padx=10)
 
-        # Line thickness and Draw button frame
-        thickness_frame = tk.Frame(options_top_frame)
-        tk.Label(thickness_frame, text="Line Thickness:").pack(side=tk.LEFT, padx=5)
-        self.thickness_entry = tk.Entry(thickness_frame, width=5)
+        # Line thickness
+        tk.Label(style_frame, text="Thickness:").pack(side=tk.LEFT, padx=(10, 0))
+        self.thickness_entry = tk.Entry(style_frame, width=5)
         self.thickness_entry.insert(0, '5')
-        self.thickness_entry.pack(side=tk.LEFT)
+        self.thickness_entry.pack(side=tk.LEFT, padx=5)
 
-        # Draw button immediately after line thickness
-        tk.Button(thickness_frame, text="Draw Indicators",
-                  command=self.draw_indicators).pack(side=tk.LEFT, padx=20)
+        style_frame.pack(pady=5)
 
-        thickness_frame.pack(side=tk.LEFT, padx=10)
-        options_top_frame.pack(pady=10)
+        # Draw button
+        tk.Button(options_frame, text="Draw Indicators",
+                  command=self.draw_indicators).pack(pady=5)
 
-        # Region options
-        region_frame = tk.Frame(self.options_frame)
-        tk.Label(region_frame, text="Region Width:").pack(side=tk.LEFT, padx=5)
-        self.region_width_entry = tk.Entry(region_frame, width=10)
+        options_frame.pack(fill='x')
+
+        # === Region Management Frame ===
+        # Region size controls
+        size_frame = tk.Frame(self.region_frame)
+        tk.Label(size_frame, text="Region Width:").pack(side=tk.LEFT)
+        self.region_width_entry = tk.Entry(size_frame, width=8)
         self.region_width_entry.insert(0, "200")
-        self.region_width_entry.pack(side=tk.LEFT)
+        self.region_width_entry.pack(side=tk.LEFT, padx=5)
 
-        tk.Label(region_frame, text="Height:").pack(side=tk.LEFT, padx=5)
-        self.region_height_entry = tk.Entry(region_frame, width=10)
+        tk.Label(size_frame, text="Height:").pack(side=tk.LEFT, padx=(10, 0))
+        self.region_height_entry = tk.Entry(size_frame, width=8)
         self.region_height_entry.insert(0, "200")
-        self.region_height_entry.pack(side=tk.LEFT)
+        self.region_height_entry.pack(side=tk.LEFT, padx=5)
 
-        tk.Button(region_frame, text="See Region",
-                  command=self.show_region).pack(side=tk.LEFT, padx=20)
+        tk.Label(size_frame, text="Cycle Delay (sec):").pack(side=tk.LEFT, padx=(10, 0))
+        self.cycle_delay_entry = tk.Entry(size_frame, width=5)
+        self.cycle_delay_entry.insert(0, "1.0")
+        self.cycle_delay_entry.pack(side=tk.LEFT, padx=5)
+        size_frame.pack(pady=5)
 
-        # Add Close All Windows button
-        tk.Button(region_frame, text="Close All Windows",
-                  command=self.close_all_windows).pack(side=tk.LEFT, padx=20)
-        # Add Save All Windows button
-        tk.Button(region_frame, text="Save All Windows",
-                  command=self.save_all_windows).pack(side=tk.LEFT, padx=20)
-        region_frame.pack(pady=10)
+        # Region control buttons
+        button_frame = tk.Frame(self.region_frame)
+        tk.Button(button_frame, text="Show Region",
+                  command=self.show_region).pack(side=tk.LEFT, padx=5)
+        self.cycle_button = tk.Button(button_frame, text="Start Cycling",
+                                      command=self.toggle_cycling)
+        self.cycle_button.pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Close All Windows",
+                  command=self.close_all_windows).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Save All Windows",
+                  command=self.save_all_windows).pack(side=tk.LEFT, padx=5)
+        button_frame.pack(pady=5)
 
         # Pack main frames
+        self.file_frame.pack(fill='x', padx=10, pady=5)
         self.input_frame.pack(fill='x', padx=10, pady=5)
-        self.controls_frame.pack(fill='x', padx=10, pady=5)
-        self.options_frame.pack(fill='x', padx=10, pady=5)
+        self.visualization_frame.pack(fill='x', padx=10, pady=5)
+        self.region_frame.pack(fill='x', padx=10, pady=5)
+    def toggle_cycling(self):
+        """Toggle the cycling of windows"""
+        if not self.cycling:
+            if not self.region_windows:
+                messagebox.showinfo("Info", "No windows to cycle through!")
+                return
 
+            try:
+                delay = float(self.cycle_delay_entry.get())
+                if delay <= 0:
+                    raise ValueError("Delay must be positive")
+            except ValueError as e:
+                messagebox.showerror("Error", "Invalid delay value. Please enter a positive number.")
+                return
+
+            self.cycling = True
+            self.cycle_button.config(text="Stop Cycling")
+            self.cycle_thread = threading.Thread(target=self.cycle_windows)
+            self.cycle_thread.daemon = True
+            self.cycle_thread.start()
+        else:
+            self.cycling = False
+            self.cycle_button.config(text="Start Cycling")
+
+    def cycle_windows(self):
+        """Cycle through the windows with delay"""
+        window_index = 0
+        try:
+            delay = float(self.cycle_delay_entry.get())
+        except ValueError:
+            delay = 1.0
+
+        while self.cycling and self.region_windows:
+            if window_index >= len(self.region_windows):
+                self.toggle_cycling()
+                window_index = 0
+
+            # Check if window still exists
+            if self.region_windows[window_index].winfo_exists():
+                self.region_windows[window_index].lift()
+                self.region_windows[window_index].focus_force()
+            else:
+                # Remove destroyed windows from the list
+                self.region_windows.pop(window_index)
+                continue
+
+            window_index += 1
+            time.sleep(delay)
+
+    def close_all_windows(self):
+        """Close all opened region windows"""
+        self.cycling = False  # Stop cycling if it's running
+        if hasattr(self, 'cycle_button'):
+            self.cycle_button.config(text="Start Cycling")
+
+        for window in self.region_windows:
+            if window.winfo_exists():  # Check if window still exists
+                window.destroy()
+        self.region_windows.clear()  # Clear the list after closing all windows
+        self.region_images.clear()  # Clear the stored images
 
     def browse_output_dir(self):
         """Browse for output directory"""

@@ -82,11 +82,13 @@ class OCRViewer(tk.Tk):
                 ocr_path = os.path.join(root_dir, folder, 'ocr.pkl')
                 img_path = None
 
-                # Find corresponding image file
-                for file in os.listdir(os.path.join(root_dir, folder)):
-                    if file.endswith('.png'):
-                        img_path = os.path.join(root_dir, folder, file)
-                        break
+                # Get the original page number from the folder name (e.g., 'page_16_results' -> 'page_16.png')
+                original_page = folder.replace('_results', '.png')
+                img_path = os.path.join(root_dir, original_page)
+
+                # Check if the image exists
+                if not os.path.exists(img_path):
+                    continue
 
                 if os.path.exists(ocr_path) and img_path:
                     with open(ocr_path, 'rb') as f:
@@ -97,7 +99,7 @@ class OCRViewer(tk.Tk):
                         if search_term in word.lower():
                             x1, y1, x2, y2 = box[0][0], box[0][1], box[2][0], box[2][1]
                             self.matches.append((img_path, box, word, confidence))
-                            self.results_tree.insert('', 'end', values=(img_path, word, f"{confidence:.2f}"))
+                            self.results_tree.insert('', 'end', values=(os.path.basename(img_path), word, f"{confidence:.2f}"))
 
     def _view_selected(self):
         selection = self.results_tree.selection()

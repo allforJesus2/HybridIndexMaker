@@ -15,14 +15,8 @@ class SetReaderSettings:
         self.original_image_ratio = self.original_image.width / self.original_image.height
         self.resize_id = None
 
-        # Set initial window size
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
-        initial_width = min(1200, screen_width - 100)  # Max width 1200 or screen width - 100
-        initial_height = min(800, screen_height - 100)  # Max height 800 or screen height - 100
-        root.geometry(f"{initial_width}x{initial_height}")
-
-        self.reader_settings = reader_settings or {
+        # Define default settings
+        default_settings = {
             "low_text": 0.3,
             "min_size": 10,
             "ycenter_ths": 0.5,
@@ -37,6 +31,37 @@ class SetReaderSettings:
             "batch_size": 1
         }
 
+        # If reader_settings is provided, update default settings with provided values
+        if reader_settings:
+            default_settings.update(reader_settings)
+
+        self.reader_settings = default_settings
+
+        # Calculate minimum height needed for controls
+        # Each entry field (approximately 50px)
+        entry_fields_height = 50 * 2  # 2 entry fields
+
+        # Each slider (approximately 60px)
+        slider_count = 10  # Number of sliders
+        sliders_height = 60 * slider_count
+
+        # Save button (approximately 40px)
+        save_button_height = 40
+
+        # Padding and margins (approximately 20px top and bottom)
+        padding_height = 40
+
+        # Calculate total minimum height needed
+        min_controls_height = entry_fields_height + sliders_height + save_button_height + padding_height
+
+        # Set initial window size
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        initial_width = min(1200, screen_width - 100)  # Max width 1200 or screen width - 100
+        initial_height = min(max(min_controls_height, 800),
+                             screen_height - 100)  # Use the larger of min_controls_height or 800, but not larger than screen height - 100
+        root.geometry(f"{initial_width}x{initial_height}")
+
         self.setup_ui()
         # Bind resize event after initial setup
         self.root.bind('<Configure>', self.on_window_resize)
@@ -49,11 +74,28 @@ class SetReaderSettings:
         # Controls frame (left side) - fixed width
         controls_frame = tk.Frame(self.root, width=400)
         controls_frame.grid(row=0, column=0, sticky='ns', padx=5, pady=5)
-        controls_frame.grid_propagate(False)  # Prevent frame from shrinking
 
-        self.create_entry_fields(controls_frame)
-        self.create_sliders(controls_frame)
-        self.create_save_button(controls_frame)
+        # Create a canvas and scrollbar for the controls
+        canvas = tk.Canvas(controls_frame, width=380)
+        scrollbar = tk.Scrollbar(controls_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Pack the canvas and scrollbar
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        # Add controls to the scrollable frame instead of controls_frame
+        self.create_entry_fields(scrollable_frame)
+        self.create_sliders(scrollable_frame)
+        self.create_save_button(scrollable_frame)
 
         # Image frame (right side)
         image_frame = tk.Frame(self.root)
@@ -67,7 +109,6 @@ class SetReaderSettings:
         # Initial update
         self.root.update_idletasks()
         self.update_image()
-
     def create_entry_fields(self, parent):
         self.create_labeled_entry(parent, "Decoder", "decoder")
         self.create_labeled_entry(parent, "Allowlist", "allowlist")

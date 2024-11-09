@@ -19,10 +19,23 @@ from openpyxl.drawing.image import Image as xlImage
 from minscore_edit import SliderApp
 from find_an_instrument import FindAnInstrumentApp
 from console_redirect import *
-import io
 from image_editor import ImageEditor
 from multi_window_dictionary_maker import DictionaryBuilder
 from detecto_gui import ObjectDetectionApp
+from svglib.svglib import svg2rlg
+from reportlab.graphics import renderPM
+import tempfile
+import io
+from tkinter import PhotoImage
+import tkinter as tk
+from tkinter import PhotoImage
+from PIL import Image
+import tempfile
+import os
+import subprocess
+
+
+
 
 class AutoScrollbar(ttk.Scrollbar):
     ''' A scrollbar that hides itself if it's not needed.
@@ -45,7 +58,7 @@ class ImageViewerApp:
     def __init__(self, root):
         # Initialize root window
         self.root = root
-        self.root.title("Image Viewer")
+        self.root.title("PIDVision.AI")
         self.root.wm_state('zoomed')
 
         # Create menu bar
@@ -59,6 +72,8 @@ class ImageViewerApp:
 
         # Initialize canvas and scrollbars
         self.create_canvas_and_scrollbars()
+
+        #self.load_svg(r'C:\Users\dcaoili\OneDrive - Samuel Engineering\Pictures\logo\cringe-logo.svg')
 
         # Initialize image attributes
         self.initialize_image_attributes()
@@ -82,12 +97,38 @@ class ImageViewerApp:
         self.capture = 'pid'
 
     # region Init stuff
+
+    def load_svg(self, svg_path, display_width=400, display_height=400):
+        # Convert SVG to PNG data using cairosvg
+        png_data = cairosvg.svg2png(url=svg_path)
+
+        # Create PIL Image from PNG data
+        image = Image.open(io.BytesIO(png_data))
+
+        # Calculate scaling to fit the desired display size
+        scale_x = display_width / image.width
+        scale_y = display_height / image.height
+        scale = min(scale_x, scale_y)
+
+        # Set new dimensions
+        new_width = int(image.width * scale)
+        new_height = int(image.height * scale)
+
+        # Resize image
+        image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        self.photo = ImageTk.PhotoImage(image)
+
+        # Update canvas
+        self.canvas.config(width=new_width, height=new_height)
+        self.canvas.create_image(new_width / 2, new_height / 2, image=self.photo)
     def create_menu_bar(self):
         # Create a menu bar
         self.menu_bar = tk.Menu(self.root)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(label="Open Folder", command=self.open_folder)
         self.file_menu.add_command(label="Open Current Image", command=self.open_image_path)
+        self.file_menu.add_command(label="Open Index", command=self.open_workbook)
+
         self.file_menu.add_command(label="Load Object detection model", command=self.load_pretrained_model)
 
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
@@ -265,7 +306,8 @@ class ImageViewerApp:
             "text_threshold": 0.3,
             "mag_ratio": 3.0,
             "allowlist": '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ()',
-            "decoder": 'beamsearch'
+            "decoder": 'beamsearch',
+            "batch_size": 1
         }
 
         self.reader_settings = {
@@ -279,7 +321,9 @@ class ImageViewerApp:
             "text_threshold": 0.3,
             "mag_ratio": 1.0,
             "allowlist": '',
-            "decoder": 'beamsearch'
+            "decoder": 'beamsearch',
+            "batch_size": 1
+            
         }
 
     def initialize_other_attributes(self):
@@ -332,6 +376,7 @@ class ImageViewerApp:
         self.equipment_defined = None
         self.crop_start = None
         self.crop_end = None
+        self.workbook_path = None
 
     def bind_events_to_canvas(self):
         # Bind events to the canvas
@@ -382,6 +427,7 @@ class ImageViewerApp:
         self.root.bind('<KeyPress-Shift_L>', self.shift_pressed)
         self.root.bind('<KeyRelease-Shift_L>', self.shift_released)
 
+        self.ctrl_held = False
         self.root.bind('<KeyPress-Control_L>', self.ctrl_pressed)
         self.root.bind('<KeyRelease-Control_L>', self.ctrl_released)
     # endregion
@@ -432,13 +478,13 @@ class ImageViewerApp:
         self.show_image()
 
     def show_image(self, event=None):
-        print('self.imscale', self.imscale)
+        #print('self.imscale', self.imscale)
         # Get the current horizontal and vertical offsets
         x_offset = self.canvas.xview()[0]
         y_offset = self.canvas.yview()[0]
 
         # Print the offsets (you can adjust the formatting as needed)
-        print(f"Horizontal Offset: {x_offset}, Vertical Offset: {y_offset}")
+        #print(f"Horizontal Offset: {x_offset}, Vertical Offset: {y_offset}")
         ''' Show image on the Canvas '''
         bbox1 = self.canvas.bbox(self.container)  # get image area
         # Remove 1 pixel shift at the sides of the bbox1
@@ -621,6 +667,8 @@ class ImageViewerApp:
 
     # endregion
 
+    def open_workbook(self):
+        os.startfile(self.workbook_path)
     def set_tag_label_groups(self):
         group_window = tk.Toplevel(self.root)
         print(self.tag_label_groups)
@@ -944,7 +992,6 @@ class ImageViewerApp:
         """
         Create a header row in the given worksheet based on the keys in the data dictionary
         and format entire columns as text.
-
         :param worksheet: The worksheet to add the header to (either xlwings or openpyxl worksheet)
         :param data: A dictionary containing the data structure
         :return: None
@@ -958,7 +1005,10 @@ class ImageViewerApp:
                 cell = worksheet.range((1, i))
                 cell.value = column_header
                 # Format entire column as text
-                column_range = worksheet.range((1, i)).expand('down').entire_column
+                # Get the last row in the worksheet
+                last_row = worksheet.cells.last_cell.row
+                # Format the entire column from row 1 to last row
+                column_range = worksheet.range((1, i), (last_row, i))
                 column_range.number_format = '@'
 
         elif isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
@@ -969,10 +1019,8 @@ class ImageViewerApp:
                 column_letter = openpyxl.utils.get_column_letter(col)
                 for cell in worksheet[column_letter]:
                     cell.number_format = '@'
-
         else:
             raise ValueError("Unsupported worksheet type")
-
     def populate_excel_row(self, worksheet, data, row):
         """
         Populate a row in the given worksheet with the provided data.
@@ -1569,6 +1617,8 @@ class ImageViewerApp:
             self.folder_path = given_folder
 
         if self.folder_path:
+            self.workbook_path = os.path.join(self.folder_path, 'index.xlsx')
+
             self.image_list = [os.path.join(self.folder_path, f) for f in os.listdir(self.folder_path) if f.endswith(('.png', '.jpg', '.jpeg', '.gif'))]
             # Sort the collected files using the natural sort key function
             self.image_list.sort(key=natural_sort_key)
@@ -1581,8 +1631,6 @@ class ImageViewerApp:
     def append_data_to_excel(self):
         try:
             # Example data to append
-            file = 'index.xlsx'
-            self.workbook_path = os.path.join(self.folder_path, file)
 
             if self.write_mode == 'xlwings':
                 self.append_data_with_xlwings()
@@ -1665,8 +1713,6 @@ class ImageViewerApp:
 
     def previous_image(self):
         self.go_to_page(self.current_image_index - 1)
-
-
 
     def clear_boxes(self):
 
@@ -1757,36 +1803,21 @@ class ImageViewerApp:
 
         self.update_data_display()
 
-    def capture_line(self, cropped_image):
-        # Check if height is greater than width
-        height, width = cropped_image.shape[:2]
-        if height > width:
-            # Rotate the image 90 degrees clockwise
-            cropped_image = cv2.rotate(cropped_image, cv2.ROTATE_90_CLOCKWISE)
+    def process_captured_text(self, cropped_image, target_attribute):
+        """
+        Unified method for processing captured text from images.
 
-        # Perform actions for capturing line
-        result = self.reader.readtext(cropped_image, **self.reader_settings)
-        if result:
-            #self.line = result[0][1]
-            self.line = ' '.join([box[1] for box in result])
-        else:
-            print('no result')
-            self.line=''
-        self.equipment = None
+        Args:
+            cropped_image: The image to process
+            target_attribute: String name of attribute to update ('line', 'equipment', 'service_in', 'service_out')
+        """
+        # Handle rotation for line captures only
+        if target_attribute == 'line':
+            height, width = cropped_image.shape[:2]
+            if height > width:
+                cropped_image = cv2.rotate(cropped_image, cv2.ROTATE_90_CLOCKWISE)
 
-    def capture_equipment(self, cropped_image):
-        # Perform actions for capturing line
-        result = self.reader.readtext(cropped_image, **self.reader_settings)
-        if result:
-            self.equipment = ' '.join([box[1] for box in result])
-            print(self.equipment)
-        else:
-            self.equipment = ''
-            print('no result')
-        self.line = None
-        #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.equipment, fill="blue", font=("Courier", 12))
-
-    def process_service_text(self, cropped_image, target_attribute):
+        # Perform OCR
         result = self.reader.readtext(cropped_image, **self.reader_settings)
 
         if not result:
@@ -1794,31 +1825,38 @@ class ImageViewerApp:
             return
 
         just_text = ' '.join([box[1] for box in result])
+        current_value = getattr(self, target_attribute, '')  # Default to empty string if attribute doesn't exist
 
-        current_value = getattr(self, target_attribute)
-
-        if self.shift_held:
-
-            ms = merge_common_substrings(current_value, just_text)
-
-            setattr(self, target_attribute, ms)
-
-        elif self.ctrl_held:
-            ms = current_value + " " + just_text
-            setattr(self, target_attribute, ms)
-
+        # Process text based on modifier keys
+        if self.ctrl_held:
+            new_text = merge_common_substrings(current_value, just_text)
+        elif self.shift_held:
+            new_text = f"{current_value} {just_text}".strip()
         else:
-            setattr(self, target_attribute, just_text)
+            new_text = just_text
 
+        # Update the target attribute
+        setattr(self, target_attribute, new_text)
 
-        self.equipment = None
+        # Clear other attributes based on the capture type
+        if target_attribute in ('line', 'equipment'):
+            other_attr = 'equipment' if target_attribute == 'line' else 'line'
+            setattr(self, other_attr, None)
+        elif target_attribute in ('service_in', 'service_out'):
+            self.equipment = None
+
+    # Simplified capture methods that all use the unified processor
+    def capture_line(self, cropped_image):
+        self.process_captured_text(cropped_image, 'line')
+
+    def capture_equipment(self, cropped_image):
+        self.process_captured_text(cropped_image, 'equipment')
 
     def capture_service_in(self, cropped_image):
-        self.process_service_text(cropped_image, 'service_in')
+        self.process_captured_text(cropped_image, 'service_in')
 
     def capture_service_out(self, cropped_image):
-        self.process_service_text(cropped_image, 'service_out')
-
+        self.process_captured_text(cropped_image, 'service_out')
     def update_data_display(self):
 
         self.data_text.delete('1.0', tk.END)  # Clear the text box
@@ -1835,7 +1873,40 @@ class ImageViewerApp:
             self.data_text.insert(tk.END, f"{data['tag']}\t{data['tag_no']}\t{data['type']}\n")
 
 
+
+def set_window_logo(window, png_path, size=(64, 64)):
+    """
+    Set a PNG image as the window logo.
+
+    Args:
+        window: Tkinter window object
+        png_path (str): Path to the PNG file
+        size (tuple): Desired icon size (width, height)
+    """
+    try:
+        # Open and resize the PNG
+        img = Image.open(png_path)
+        img = img.resize(size, Image.Resampling.LANCZOS)
+
+        # Save as temporary ICO
+        img.save('temp_icon.ico', format='ICO')
+
+        # Set the window icon
+        window.iconbitmap('temp_icon.ico')
+
+        # Clean up
+        import os
+        os.remove('temp_icon.ico')
+
+    except Exception as e:
+        print(f"Error setting icon: {e}")
+
+
 if __name__ == "__main__":
     root = tk.Tk()
+
+    png_path = r"C:\Users\dcaoili\OneDrive - Samuel Engineering\Pictures\logo\LOGO.png"
+    set_window_logo(root, png_path)
+
     app = ImageViewerApp(root)
     root.mainloop()

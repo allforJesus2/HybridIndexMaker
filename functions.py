@@ -140,8 +140,10 @@ def merge_common_substrings(str1, str2):
     # Append any remaining words from either string
     merged_words.extend(words1[i:])
     merged_words.extend(["/" + word for word in words2[j:]])
+    last_word = merged_words[-1:][0]
+    print('last word', last_word)
     joined_words = " ".join(merged_words)
-    if joined_words[-1:].isalpha():
+    if not any(char.isdigit() for char in last_word):
         joined_words = joined_words+"S"
     return joined_words
 
