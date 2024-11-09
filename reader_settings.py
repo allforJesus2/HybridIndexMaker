@@ -251,3 +251,73 @@ class SetReaderSettings:
         scaled_img = ImageTk.PhotoImage(scaled_img)
         self.image_label.config(image=scaled_img)
         self.image_label.image = scaled_img
+
+
+import tkinter as tk
+from tkinter import filedialog
+import easyocr
+from PIL import Image
+
+
+class OCRSettingsApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("OCR Settings")
+
+        # Initialize EasyOCR reader
+        print("Initializing EasyOCR... (this may take a moment)")
+        self.reader = easyocr.Reader(['en'])
+
+        # Create main button frame
+        self.button_frame = tk.Frame(self.root)
+        self.button_frame.pack(pady=20)
+
+        # Create open file button
+        self.open_button = tk.Button(
+            self.button_frame,
+            text="Open Image",
+            command=self.open_file
+        )
+        self.open_button.pack()
+
+        self.settings_window = None
+
+    def open_file(self):
+        # Open file dialog
+        file_path = filedialog.askopenfilename(
+            filetypes=[
+                ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if file_path:
+            # Close previous settings window if it exists
+            if self.settings_window:
+                self.settings_window.destroy()
+
+            # Create new window for settings
+            self.settings_window = tk.Toplevel(self.root)
+            self.settings_window.title("OCR Settings - " + file_path)
+
+            # Initialize settings window with the selected image
+            SetReaderSettings(
+                self.settings_window,
+                file_path,
+                self.reader,
+                callback=self.on_settings_save
+            )
+
+    def on_settings_save(self, settings):
+        print("Settings saved:", settings)
+
+
+def main():
+    root = tk.Tk()
+    root.geometry("300x100")  # Small window for the initial file selection
+    app = OCRSettingsApp(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
