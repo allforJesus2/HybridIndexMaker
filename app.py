@@ -25,6 +25,7 @@ import io
 import tkinter as tk
 import os
 import threading
+from ocr_results_viewer import OCRViewer
 
 class AutoScrollbar(ttk.Scrollbar):
     ''' A scrollbar that hides itself if it's not needed.
@@ -54,7 +55,6 @@ class PIDVisionApp:
 
         self.splash = SplashScreen(root, r"C:\Users\dcaoili\OneDrive - Samuel Engineering\Pictures\logo\logo-big.png")
 
-
         # Start initialization in a separate thread
         init_thread = threading.Thread(target=self.initialize_app)
         init_thread.start()
@@ -72,8 +72,6 @@ class PIDVisionApp:
 
         # Initialize canvas and scrollbars
         self.create_canvas_and_scrollbars()
-
-        #self.load_svg(r'C:\Users\dcaoili\OneDrive - Samuel Engineering\Pictures\logo\cringe-logo.svg')
 
         # Initialize image attributes
         self.initialize_image_attributes()
@@ -113,7 +111,6 @@ class PIDVisionApp:
         self.splash.destroy()
         self.root.deiconify()
         self.root.title("PIDVision.AI")
-        self.root.wm_state('zoomed')
 
 
     # region Init stuff
@@ -134,6 +131,7 @@ class PIDVisionApp:
         self.app_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.app_menu.add_command(label="Image Editor", command=self.open_image_editor)
         self.app_menu.add_command(label="Find an instrument App", command=self.open_FAIA)
+        self.app_menu.add_command(label="Search OCR Results", command=self.open_ocr_results_viewer)
         self.app_menu.add_command(label="Train Object Detection Model", command=self.open_detecto_gui)
         self.app_menu.add_command(label="Open Console Popup", command=self.open_console)
 
@@ -220,12 +218,14 @@ class PIDVisionApp:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
 
-        # Calculate the x-coordinate and height of the data_window
-        x = screen_width - 260  # assuming a width of 400 for the data_window
-        height = screen_height - 100
+        # Set data window width
+        data_window_width = 250
 
-        # Set the geometry of the data_window
-        self.data_window.geometry(f'250x{height}+{x}+32')
+        # Calculate x position for data window (right side of screen)
+        data_window_x = screen_width - data_window_width
+
+        # Set the geometry of the data_window to be full height and aligned to right
+        self.data_window.geometry(f'{data_window_width}x{screen_height}+{data_window_x}+0')
 
         # Create a Text widget to display the captured data
         self.data_text = tk.Text(self.data_window, wrap=tk.WORD, font=("Courier", 14))
@@ -233,8 +233,14 @@ class PIDVisionApp:
 
         # Bind the window close event to update the data display
         self.data_window.protocol("WM_DELETE_WINDOW", self.update_data_display)
+
         # Ensure data_window is always on top of the root window
         self.root.bind("<FocusIn>", lambda event: self.data_window.lift())
+
+        # Position the main window to fill the remaining space on the left
+        root_window_width = screen_width - data_window_width
+        self.root.geometry(f'{root_window_width}x{screen_height}+0+0')
+
 
     def create_canvas_and_scrollbars(self):
         # Vertical and horizontal scrollbars for canvas
@@ -664,6 +670,10 @@ class PIDVisionApp:
 
     # endregion
 
+    def open_ocr_results_viewer(self):
+        ocr_viewer_window = tk.Toplevel(self.root)
+        OCRViewer(ocr_viewer_window, self.folder_path)
+
     def open_workbook(self):
         os.startfile(self.workbook_path)
     def set_tag_label_groups(self):
@@ -830,12 +840,12 @@ class PIDVisionApp:
         ws.title = 'Instrument Count'
 
         img = self.cv2img
-
+        '''
         if not self.pid and self.pid_coords:
             self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
             cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
             self.capture_pid(cropped_image)
-
+        '''
         labels, boxes, scores = model_predict_on_mosaic(img, self.model_inst, threshold=self.nms_threshold)
         results = zip(labels, boxes, scores)
 

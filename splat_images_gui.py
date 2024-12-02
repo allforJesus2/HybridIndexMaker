@@ -54,7 +54,8 @@ class SplatImagesGUI:
         folder_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=5, pady=5)
 
         self.kernel_folder_entry = self.labeled_entry_with_browse(folder_frame, "Kernel Folder:", 0)
-        self.output_folder_entry = self.labeled_entry_with_browse(folder_frame, "Output Folder:", 1)
+        self.not_kernel_folder_entry = self.labeled_entry_with_browse(folder_frame, "NOT Kernel Folder:", 1)
+        self.output_folder_entry = self.labeled_entry_with_browse(folder_frame, "Output Folder:", 2)
 
     def create_image_params_section(self, parent):
         image_frame = ttk.LabelFrame(parent, text="Image Parameters", padding="10")
@@ -132,7 +133,7 @@ class SplatImagesGUI:
 
         ttk.Button(button_frame, text="Save Settings", command=self.save_settings).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="Load Settings", command=self.load_settings).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="OK", command=self.on_ok).pack(side=tk.RIGHT, padx=(0, 10))
+        ttk.Button(button_frame, text="Generate", command=self.on_generate).pack(side=tk.RIGHT, padx=(0, 10))
         ttk.Button(button_frame, text="Cancel", command=self.on_cancel).pack(side=tk.RIGHT)
 
 
@@ -197,7 +198,7 @@ class SplatImagesGUI:
                 messagebox.showerror("Error Loading Settings", str(e))
 
 
-    def on_ok(self):
+    def on_generate(self):
         settings = self.get_current_settings()
         try:
             # Convert settings to appropriate types
@@ -243,6 +244,7 @@ class SplatImagesGUI:
                 generate_output_image(
                     settings['kernel_folder_entry'],
                     current_output_folder,
+                    not_folder=settings['not_kernel_folder_entry'],
                     output_size=output_size,
                     splats_per_image=splats_per_image,
                     yolo=yolo,

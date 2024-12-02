@@ -7,6 +7,91 @@ from tkinter import filedialog, colorchooser, ttk, messagebox
 import time
 import threading
 
+
+class CropWindow(tk.Toplevel):
+    def __init__(self, parent, image_path, coords, initial_width, initial_height):
+        super().__init__(parent)
+
+        self.image_path = image_path
+        self.coords = coords
+        self.full_image = Image.open(image_path)
+        self.initial_width = initial_width
+        self.initial_height = initial_height
+
+        # Calculate center of the bounding box
+        self.center_x = (coords[0] + coords[2]) // 2
+        self.center_y = (coords[1] + coords[3]) // 2
+
+        # Create control frame at the top
+        control_frame = tk.Frame(self)
+        control_frame.pack(fill='x', padx=5, pady=5)
+
+        # Step size entry
+        tk.Label(control_frame, text="Step (px):").pack(side=tk.LEFT)
+        self.step_entry = tk.Entry(control_frame, width=8)
+        self.step_entry.insert(0, "500")
+        self.step_entry.pack(side=tk.LEFT, padx=5)
+
+        # Zoom buttons
+        tk.Button(control_frame, text="-", command=self.decrease_size).pack(side=tk.LEFT, padx=2)
+        tk.Button(control_frame, text="+", command=self.increase_size).pack(side=tk.LEFT, padx=2)
+
+        # Open original image button
+        tk.Button(control_frame, text="Open Original",
+                  command=lambda: startfile(self.image_path)).pack(side=tk.RIGHT, padx=5)
+
+        # Image label
+        self.image_label = tk.Label(self)
+        self.image_label.pack(expand=True, fill='both')
+
+        # Set window title
+        filename = os.path.basename(image_path)
+        self.title(f"{filename} - Region at {coords}")
+
+        # Update the image
+        self.update_crop(initial_width, initial_height)
+
+    def get_step_size(self):
+        try:
+            return int(self.step_entry.get())
+        except ValueError:
+            messagebox.showerror("Error", "Invalid step size. Using default 500px.")
+            self.step_entry.delete(0, tk.END)
+            self.step_entry.insert(0, "500")
+            return 500
+
+    def increase_size(self):
+        step = self.get_step_size()
+        self.update_crop(self.current_width + step, self.current_height + step)
+
+    def decrease_size(self):
+        step = self.get_step_size()
+        new_width = max(100, self.current_width - step)  # Minimum width of 100px
+        new_height = max(100, self.current_height - step)  # Minimum height of 100px
+        self.update_crop(new_width, new_height)
+
+    def update_crop(self, width, height):
+        # Store current dimensions
+        self.current_width = width
+        self.current_height = height
+
+        # Calculate crop coordinates
+        left = max(0, self.center_x - width // 2)
+        top = max(0, self.center_y - height // 2)
+        right = min(self.full_image.width, left + width)
+        bottom = min(self.full_image.height, top + height)
+
+        # Crop the region
+        region = self.full_image.crop((left, top, right, bottom))
+
+        # Convert to PhotoImage and update label
+        photo = ImageTk.PhotoImage(region)
+        self.image_label.configure(image=photo)
+        self.image_label.image = photo  # Keep a reference!
+
+
+# Modified show_region method for FindAnInstrumentApp class
+
 class FindAnInstrumentApp:
     def __init__(self, root, img_path=''):
         self.root = root
@@ -52,9 +137,9 @@ class FindAnInstrumentApp:
 
         # Parse buttons
         parse_buttons_frame = tk.Frame(self.input_frame)
-        tk.Button(parse_buttons_frame, text="Parse & Draw Indicators",
+        tk.Button(parse_buttons_frame, text="Parse & Overlay Indicators",
                   command=self.parse_combined_input).pack(side=tk.LEFT, padx=5)
-        tk.Button(parse_buttons_frame, text="Parse & Show Regions",
+        tk.Button(parse_buttons_frame, text="Parse & Open Crop Regions",
                   command=self.parse_and_show_regions).pack(side=tk.LEFT, padx=5)
         parse_buttons_frame.pack(pady=5)
 
@@ -183,43 +268,6 @@ class FindAnInstrumentApp:
             self.cycling = False
             self.cycle_button.config(text="Start Cycling")
 
-    def cycle_windows(self):
-        """Cycle through the windows with delay"""
-        window_index = 0
-        try:
-            delay = float(self.cycle_delay_entry.get())
-        except ValueError:
-            delay = 1.0
-
-        while self.cycling and self.region_windows:
-            if window_index >= len(self.region_windows):
-                self.toggle_cycling()
-                window_index = 0
-
-            # Check if window still exists
-            if self.region_windows[window_index].winfo_exists():
-                self.region_windows[window_index].lift()
-                self.region_windows[window_index].focus_force()
-            else:
-                # Remove destroyed windows from the list
-                self.region_windows.pop(window_index)
-                continue
-
-            window_index += 1
-            time.sleep(delay)
-
-    def close_all_windows(self):
-        """Close all opened region windows"""
-        self.cycling = False  # Stop cycling if it's running
-        if hasattr(self, 'cycle_button'):
-            self.cycle_button.config(text="Start Cycling")
-
-        for window in self.region_windows:
-            if window.winfo_exists():  # Check if window still exists
-                window.destroy()
-        self.region_windows.clear()  # Clear the list after closing all windows
-        self.region_images.clear()  # Clear the stored images
-
     def browse_output_dir(self):
         """Browse for output directory"""
         dir_path = filedialog.askdirectory(title="Select Output Directory")
@@ -242,35 +290,7 @@ class FindAnInstrumentApp:
         os.makedirs(output_dir, exist_ok=True)
         return output_dir
 
-    def save_all_windows(self):
-        """Save all opened region windows as PNG files"""
-        if not self.region_windows or not self.region_images:
-            tk.messagebox.showinfo("Info", "No region windows to save!")
-            return
-
-        # Ask user for save directory
-        save_dir = filedialog.askdirectory(title="Select Directory to Save Images")
-        if not save_dir:  # User cancelled
-            return
-
-        # Create a base filename from the original image
-        base_filename = os.path.splitext(os.path.basename(self.image_path_entry.get()))[0]
-
-        # Save each region image
-        for i, image in enumerate(self.region_images):
-            if image:
-                # Create filename with index
-                filename = f"{base_filename}_region_{i + 1}.png"
-                filepath = os.path.join(save_dir, filename)
-
-                # Save the image
-                try:
-                    image.save(filepath, "PNG")
-                except Exception as e:
-                    tk.messagebox.showerror("Error", f"Failed to save region {i + 1}: {str(e)}")
-
-        tk.messagebox.showinfo("Success", f"Saved {len(self.region_images)} region images to {save_dir}")
-
+    # Modified show_region method for FindAnInstrumentApp class
     def show_region(self):
         try:
             # Get the current image path
@@ -289,11 +309,9 @@ class FindAnInstrumentApp:
             region_width = int(self.region_width_entry.get())
             region_height = int(self.region_height_entry.get())
 
-            # Open the image
-            img = Image.open(image_path)
-
-            # Clear previous region images
-            self.region_images.clear()
+            # Clear previous region images and windows lists
+            #self.region_images.clear()
+            #self.region_windows.clear()
 
             # Process coordinates
             coords_lines = coords_text.split('\n')
@@ -306,44 +324,125 @@ class FindAnInstrumentApp:
                 else:
                     coords = list(map(int, coords_str.strip('[]').split(',')))
 
-                # Calculate the center of the bounding box
+                # Create a new CropWindow
+                window = CropWindow(self.root, image_path, coords, region_width, region_height)
+                self.region_windows.append(window)
+
+                # Store the initial cropped region for saving
                 center_x = (coords[0] + coords[2]) // 2
                 center_y = (coords[1] + coords[3]) // 2
-
-                # Calculate crop coordinates
                 left = max(0, center_x - region_width // 2)
                 top = max(0, center_y - region_height // 2)
-                right = min(img.width, left + region_width)
-                bottom = min(img.height, top + region_height)
-
-                # Crop the region
-                region = img.crop((left, top, right, bottom))
-                self.region_images.append(region)  # Store the region image
-
-                # Create a new window for this region
-                region_window = tk.Toplevel(self.root)
-                self.region_windows.append(region_window)
-                filename = os.path.basename(image_path)
-                region_window.title(f"{filename} - Region at {coords}")
-
-                # Convert PIL image to PhotoImage
-                photo = ImageTk.PhotoImage(region)
-
-                # Create label and display image
-                label = tk.Label(region_window, image=photo)
-                label.image = photo  # Keep a reference!
-                label.pack()
+                right = min(Image.open(image_path).width, left + region_width)
+                bottom = min(Image.open(image_path).height, top + region_height)
+                region = Image.open(image_path).crop((left, top, right, bottom))
+                self.region_images.append(region)
 
         except Exception as e:
             print(f"Error showing region: {e}")
+            messagebox.showerror("Error", f"An error occurred: {str(e)}")
+
+    def save_all_windows(self):
+        """Save all opened region windows as PNG files using their current crop state"""
+        if not self.region_windows:
+            messagebox.showinfo("Info", "No region windows to save!")
+            return
+
+        # Ask user for save directory
+        save_dir = filedialog.askdirectory(title="Select Directory to Save Images")
+        if not save_dir:  # User cancelled
+            return
+
+        # Create a base filename from the original image
+        base_filename = os.path.splitext(os.path.basename(self.image_path_entry.get()))[0]
+
+        # Save current state of each window
+        saved_count = 0
+        for i, window in enumerate(self.region_windows):
+            if isinstance(window, CropWindow) and window.winfo_exists():
+                try:
+                    # Get the current cropped region from the window
+                    left = max(0, window.center_x - window.current_width // 2)
+                    top = max(0, window.center_y - window.current_height // 2)
+                    right = min(window.full_image.width, left + window.current_width)
+                    bottom = min(window.full_image.height, top + window.current_height)
+
+                    # Crop the region with current dimensions
+                    current_region = window.full_image.crop((left, top, right, bottom))
+
+                    # Create filename with index and dimensions
+                    filename = f"{base_filename}_region_{i + 1}_{window.current_width}x{window.current_height}.png"
+                    filepath = os.path.join(save_dir, filename)
+
+                    # Save the image
+                    current_region.save(filepath, "PNG")
+                    saved_count += 1
+
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to save region {i + 1}: {str(e)}")
+
+        if saved_count > 0:
+            messagebox.showinfo("Success", f"Saved {saved_count} region images to {save_dir}")
+        else:
+            messagebox.showwarning("Warning", "No images were saved")
 
     def close_all_windows(self):
-        """Close all opened region windows"""
+        """Close all opened region windows and clean up resources"""
+        self.cycling = False  # Stop cycling if it's running
+        if hasattr(self, 'cycle_button'):
+            self.cycle_button.config(text="Start Cycling")
+
+        # Close each window and clean up resources
         for window in self.region_windows:
-            if window.winfo_exists():  # Check if window still exists
-                window.destroy()
-        self.region_windows.clear()  # Clear the list after closing all windows
-        self.region_images.clear()  # Clear the stored images
+            try:
+                if isinstance(window, CropWindow) and window.winfo_exists():
+                    # Close the window
+                    window.destroy()
+            except Exception as e:
+                print(f"Error closing window: {e}")
+
+        # Clear all lists
+        self.region_windows.clear()
+        self.region_images.clear()
+
+    def cycle_windows(self):
+        """Cycle through the windows with delay"""
+        window_index = 0
+        try:
+            delay = float(self.cycle_delay_entry.get())
+        except ValueError:
+            delay = 1.0
+
+        while self.cycling and self.region_windows:
+            # Reset index if we've reached the end
+            if window_index >= len(self.region_windows):
+                window_index = 0
+
+            # Get current window
+            window = self.region_windows[window_index]
+
+            # Check if window still exists and is valid
+            if isinstance(window, CropWindow) and window.winfo_exists():
+                try:
+                    window.lift()
+                    window.focus_force()
+                    window_index += 1
+                except Exception as e:
+                    print(f"Error cycling window: {e}")
+                    # Remove invalid window and continue
+                    self.region_windows.pop(window_index)
+                    continue
+            else:
+                # Remove destroyed or invalid windows
+                self.region_windows.pop(window_index)
+                continue
+
+            # Stop cycling if no windows left
+            if not self.region_windows:
+                self.toggle_cycling()
+                break
+
+            time.sleep(delay)
 
     def reset_index(self):
         """Reset the current index to 0"""

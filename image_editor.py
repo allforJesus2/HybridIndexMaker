@@ -20,6 +20,7 @@ class ImageEditor:
         self.contrast = 1.0
         self.erosion = 0
         self.dilation = 0
+        self.rotation = 0  # New rotation variable
 
         self.color_tolerance = 30  # Default color tolerance value
         self.selected_color = None
@@ -46,6 +47,27 @@ class ImageEditor:
 
         # Load image button
         ttk.Button(control_frame, text="Load Image", command=self.load_image).pack(pady=(0, 10))
+
+        # Rotation control
+        rotation_frame = ttk.LabelFrame(control_frame, text="Rotation", padding=5)
+        rotation_frame.pack(fill='x', pady=(0, 10))
+
+        # Rotation scale
+        ttk.Label(rotation_frame, text="Angle:").pack()
+        self.rotation_scale = ttk.Scale(rotation_frame, from_=-180, to=180, value=0,
+                                        orient='horizontal', command=self.update_image)
+        self.rotation_scale.pack(fill='x')
+
+        # Quick rotation buttons
+        quick_rotation_frame = ttk.Frame(rotation_frame)
+        quick_rotation_frame.pack(fill='x', pady=5)
+
+        ttk.Button(quick_rotation_frame, text="90°",
+                   command=lambda: self.quick_rotate(90)).pack(side='left', expand=True, padx=2)
+        ttk.Button(quick_rotation_frame, text="180°",
+                   command=lambda: self.quick_rotate(180)).pack(side='left', expand=True, padx=2)
+        ttk.Button(quick_rotation_frame, text="270°",
+                   command=lambda: self.quick_rotate(270)).pack(side='left', expand=True, padx=2)
 
         # Brightness control
         ttk.Label(control_frame, text="Brightness:").pack()
@@ -161,6 +183,108 @@ class ImageEditor:
 
         self.color_sampling_enabled = False
 
+    def quick_rotate(self, angle):
+        """Quickly rotate image by a multiple of 90 degrees"""
+        self.rotation_scale.set(angle)
+        self.update_image()
+
+    def rotate_image(self, img, angle):
+        """Rotate image with optimization for 90-degree multiples"""
+        if angle == 0:
+            return img
+
+        # Check if angle is a multiple of 90
+        if angle % 90 == 0:
+            # Convert angle to range 0-360 and then to number of 90-degree rotations
+            rotations = (int(angle) % 360) // 90
+            # Use fast rotation for 90-degree multiples
+            return img.rotate(angle, expand=True, resample=Image.NEAREST)
+        else:
+            # Use regular rotation for arbitrary angles
+            return img.rotate(angle, expand=True, resample=Image.BICUBIC)
+
+    def update_image(self, *args):
+        if self.original_image is None:
+            return
+
+        # Get current adjustment values
+        brightness = self.brightness_scale.get()
+        contrast = self.contrast_scale.get()
+        erosion = int(self.erosion_scale.get())
+        dilation = int(self.dilation_scale.get())
+        rotation = float(self.rotation_scale.get())  # Get rotation angle
+
+        # Apply adjustments
+        img = self.original_image.copy()
+
+        # Apply rotation first to work with the original image
+        if rotation != 0:
+            img = self.rotate_image(img, rotation)
+
+        # Apply brightness and contrast
+        if brightness != 1.0:
+            enhancer = ImageEnhance.Brightness(img)
+            img = enhancer.enhance(brightness)
+        if contrast != 1.0:
+            enhancer = ImageEnhance.Contrast(img)
+            img = enhancer.enhance(contrast)
+
+        # Apply morphological operations
+        if erosion > 0 or dilation > 0:
+            img = self.apply_morphological_ops(img, erosion, dilation)
+
+        # Apply color operations if a color is selected and an operation is chosen
+        if self.color_operation_var.get() != "No color change":
+            if self.selected_color or all(v.get().isdigit() for v in [self.r_var, self.g_var, self.b_var]):
+                img = self.process_color(img)
+
+        # Convert to black and white if enabled
+        if self.bw_var.get():
+            img = self.convert_to_bw(img)
+
+        # Resize image to fit canvas while maintaining aspect ratio
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        # Calculate scaling factor
+        img_width, img_height = img.size
+        width_ratio = canvas_width / img_width
+        height_ratio = canvas_height / img_height
+        scale_factor = min(width_ratio, height_ratio)
+
+        # Resize image
+        new_width = int(img_width * scale_factor)
+        new_height = int(img_height * scale_factor)
+        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+        # Convert to PhotoImage for display
+        self.display_image = img
+        self.photo = ImageTk.PhotoImage(img)
+
+        # Update canvas
+        self.canvas.delete("all")
+        self.canvas.create_image(canvas_width // 2, canvas_height // 2,
+                                 image=self.photo, anchor='center')
+
+    def reset_values(self):
+        """Reset all adjustment values to their defaults"""
+        self.brightness_scale.set(1.0)
+        self.contrast_scale.set(1.0)
+        self.erosion_scale.set(0)
+        self.dilation_scale.set(0)
+        self.rotation_scale.set(0)  # Reset rotation
+        self.tolerance_scale.set(30)
+        self.r_var.set("0")
+        self.g_var.set("0")
+        self.b_var.set("0")
+        self.replace_r_var.set("0")
+        self.replace_g_var.set("0")
+        self.replace_b_var.set("0")
+        self.selected_color = None
+        self.bw_var.set(False)
+        self.color_operation_var.set("No color change")
+        self.update_image()
+
     def process_color(self, img):
         """Process image colors based on selected operation"""
         if not self.selected_color and not all(v.get().isdigit() for v in [self.r_var, self.g_var, self.b_var]):
@@ -211,65 +335,8 @@ class ImageEditor:
 
         # Convert back to PIL image
         return Image.fromarray(rgba)
-    def reset_values(self):
-        """Reset all adjustment values to their defaults"""
-        self.brightness_scale.set(1.0)
-        self.contrast_scale.set(1.0)
-        self.erosion_scale.set(0)
-        self.dilation_scale.set(0)
-        self.tolerance_scale.set(30)
-        self.r_var.set("0")
-        self.g_var.set("0")
-        self.b_var.set("0")
-        self.replace_r_var.set("0")
-        self.replace_g_var.set("0")
-        self.replace_b_var.set("0")
-        self.selected_color = None
-        self.bw_var.set(False)
-        self.color_operation_var.set("No color change")
-        self.update_image()
 
-    def update_image(self, *args):
-        if self.original_image is None:
-            return
 
-        # Get current adjustment values
-        brightness = self.brightness_scale.get()
-        contrast = self.contrast_scale.get()
-        erosion = int(self.erosion_scale.get())
-        dilation = int(self.dilation_scale.get())
-
-        # Apply adjustments
-        img = self.original_image.copy()
-
-        # Apply brightness and contrast
-        if brightness != 1.0:
-            enhancer = ImageEnhance.Brightness(img)
-            img = enhancer.enhance(brightness)
-        if contrast != 1.0:
-            enhancer = ImageEnhance.Contrast(img)
-            img = enhancer.enhance(contrast)
-
-        # Apply morphological operations
-        if erosion > 0 or dilation > 0:
-            img = self.apply_morphological_ops(img, erosion, dilation)
-
-        # Apply color operations if a color is selected and an operation is chosen
-        if self.color_operation_var.get() != "No color change":
-            if self.selected_color or all(v.get().isdigit() for v in [self.r_var, self.g_var, self.b_var]):
-                img = self.process_color(img)
-
-        # Convert to black and white if enabled
-        if self.bw_var.get():
-            img = self.convert_to_bw(img)
-
-        # Convert to PhotoImage for display
-        self.display_image = img
-        self.photo = ImageTk.PhotoImage(img)
-
-        # Update canvas
-        self.canvas.delete("all")
-        self.canvas.create_image(640 // 2, 480 // 2, image=self.photo, anchor='center')
     def remove_color(self, img):
         """Remove or replace selected color from image within tolerance range"""
         if not self.color_removal_var.get():  # Check if color removal is enabled
@@ -502,7 +569,7 @@ class ImageEditor:
             'contrast': max(0.0, float(self.contrast_scale.get())),
             'erosion': max(0, int(self.erosion_scale.get())),
             'dilation': max(0, int(self.dilation_scale.get())),
-            # Add color-related settings
+            'rotation': float(self.rotation_scale.get()),  # Add rotation to adjustments
             'color_operation': self.color_operation_var.get(),
             'target_color': {
                 'r': int(self.r_var.get() or 0),

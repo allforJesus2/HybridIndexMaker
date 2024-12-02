@@ -214,32 +214,32 @@ def generate_output_image(root_folder, output_folder, **kwargs):
     transforms = {
         'p_mirror_x': kwargs.get('p_mirror_x', 0.5),
         'p_mirror_y': kwargs.get('p_mirror_y', 0.5),
-        'min_scale': kwargs.get('min_scale', 0.8),
+        'min_scale': kwargs.get('min_scale', 0.9),
         'max_scale': kwargs.get('max_scale', 1.2),
         'uniform_scale': kwargs.get('uniform_scale', False),
         'black_threshold': kwargs.get('black_threshold', 50),
-        'color_probability': kwargs.get('color_probability', 0.5),
+        'color_probability': kwargs.get('color_probability', 0.0),
         'p_rotate': kwargs.get('p_rotate', 0.5),
 
     }
-
+    not_folder = kwargs.get('not_folder')
     # New parameter for random canvas color probability
 
     brightness_range = kwargs.get('brightness_range', (0.5, 1.5))  # Default value
     contrast_range = kwargs.get('contrast_range', (0.5, 1.5))  # Default value
     hue_range = kwargs.get('hue_range', (0, 180))  # Default value
-    invert_probability = kwargs.get('invert_probability', 0.5)  # Default value
+    invert_probability = kwargs.get('invert_probability', 0.0)  # Default value
 
     bbox_scale_min = kwargs.get('bbox_scale_min', 1.0)
-    bbox_scale_max = kwargs.get('bbox_scale_max', 1.2)
+    bbox_scale_max = kwargs.get('bbox_scale_max', 1.0)
 
-    splat_variance = kwargs.get('splats_variance', 0.1)  # Default value
+    splat_variance = kwargs.get('splats_variance', 0.2)  # Default value
     count = kwargs.get('splats_per_image', 50)  # Default value
     random_variance = random.uniform(1-splat_variance, 1+splat_variance)
     count = int(count*random_variance)
 
-    blur_probability = kwargs.get('blur_probability', 0.5)
-    blur_max = kwargs.get('blur_max', 3)
+    blur_probability = kwargs.get('blur_probability', 0.2)
+    blur_max = kwargs.get('blur_max', 1)
 
     """Generate an output image with 100 random objects and create the annotation file."""
     input_files = []
@@ -250,24 +250,28 @@ def generate_output_image(root_folder, output_folder, **kwargs):
 
     new_image = Image.new("RGB", (output_size, output_size), (255,255,255))
     object_data_list = []
+    # Get NOT kernel files
+    not_files = []
+    if not_folder:
+        for root, _, files in os.walk(not_folder):
+            for file in files:
+                if file.endswith((".png", ".PNG", ".jpg", ".JPG")):
+                    not_files.append(os.path.join(root, file))
+
 
     # Group input files by object name
-    not_group = []
     object_groups = {}
     for file_path in input_files:
         filename = os.path.basename(file_path)
         name, _ = os.path.splitext(filename)
-        if name.startswith("NOT"):
-            not_group.append(file_path)
-        else:
-            name = re.sub(r'\d+$', '', name)  # Remove trailing numbers
-            object_groups.setdefault(name, []).append(file_path)
+        name = re.sub(r'\d+$', '', name)  # Remove trailing numbers
+        object_groups.setdefault(name, []).append(file_path)
 
     # Place NOT objects
     not_count = int(count * not_weight)
     for _ in range(not_count):
-        if not_group:
-            file_path = random.choice(not_group)
+        if not_files:
+            file_path = random.choice(not_files)
             input_image = Image.open(file_path)
             place_object(new_image, input_image, "NOT", object_data_list, output_size, transforms)
 
