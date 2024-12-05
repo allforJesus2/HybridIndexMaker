@@ -1,48 +1,30 @@
-import tkinter.messagebox
-import tkinter.simpledialog
-from model_predict_mosaic import *
-from functions import *
-from tkinter import filedialog, ttk
 from PIL import Image, ImageTk
-import xlwings as xw
+from console_redirect import *
+from convolutioner import ConvolutionReplacer
 from detecto.core import Model
+from detecto_gui import ObjectDetectionApp
+from easyocr_mosaic import *
+from find_an_instrument import FindAnInstrumentApp
+from functions import *
+from image_editor import ImageEditor
+from minscore_edit import SliderApp
+from model_predict_mosaic import *
+from multi_window_dictionary_maker import DictionaryBuilder
+from ocr_results_viewer import OCRViewer
+from reader_settings import SetReaderSettings
+from tkinter import filedialog, ttk
+from auto_scroll import AutoScrollbar
 import easyocr
 import importlib.util
-from reader_settings import SetReaderSettings
 import json
 import openpyxl
-from easyocr_mosaic import *
-from convolutioner import ConvolutionReplacer
-import re
-from openpyxl.drawing.image import Image as xlImage
-from minscore_edit import SliderApp
-from find_an_instrument import FindAnInstrumentApp
-from console_redirect import *
-from image_editor import ImageEditor
-from multi_window_dictionary_maker import DictionaryBuilder
-from detecto_gui import ObjectDetectionApp
-import io
-import tkinter as tk
 import os
+import re
 import threading
-from ocr_results_viewer import OCRViewer
-
-class AutoScrollbar(ttk.Scrollbar):
-    ''' A scrollbar that hides itself if it's not needed.
-        Works only if you use the grid geometry manager '''
-
-    def set(self, lo, hi):
-        if float(lo) <= 0.0 and float(hi) >= 1.0:
-            self.grid_remove()
-        else:
-            self.grid()
-            ttk.Scrollbar.set(self, lo, hi)
-
-    def pack(self, **kw):
-        raise tk.TclError('Cannot use pack with this widget')
-
-    def place(self, **kw):
-        raise tk.TclError('Cannot use place with this widget')
+import tkinter as tk
+import tkinter.messagebox
+import tkinter.simpledialog
+import xlwings as xw
 
 class PIDVisionApp:
     def __init__(self, root):
@@ -95,8 +77,6 @@ class PIDVisionApp:
         # Initialize captured data
         self.capture = 'pid'
 
-
-
     def check_initialization(self, init_thread):
         """Check if initialization is complete and show main window"""
         if init_thread.is_alive():
@@ -105,6 +85,7 @@ class PIDVisionApp:
         else:
             # Initialization complete, show main window
             self.show_main_window()
+
 
     def show_main_window(self):
         """Show the main window and destroy splash screen"""
@@ -142,12 +123,12 @@ class PIDVisionApp:
         self.command_menu.add_command(label="Create images from PDF", command=self.open_pdf2png)
         self.command_menu.add_command(label="Merge pdfs", command=self.merge_pdfs)
 
-        self.command_menu.add_command(label="Load a Tag Correction Function", command=self.load_correct_fn)
+        #self.command_menu.add_command(label="Load a Tag Correction Function", command=self.load_correct_fn)
         self.command_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
         self.command_menu.add_command(label="Live Write Mode", command=lambda: self.set_write_mode('xlwings'))
         self.command_menu.add_command(label="Silent/quick Write Mode", command=lambda: self.set_write_mode('openpyxl'))
         self.command_menu.add_command(label="Save workbook", command=self.save_workbook)
-        self.command_menu.add_command(label="Auto Generate Index", command=self.auto_generate_index)
+        #self.command_menu.add_command(label="Auto Generate Index", command=self.auto_generate_index)
         self.command_menu.add_command(label="Generate type xlsx via convolution", command=self.create_tag_type_xlsx)
         self.command_menu.add_command(label="Generate All pages Instrument Count", command=self.generate_instrument_count)
         self.command_menu.add_command(label="Generate Single Page Instrument Count", command=self.one_instrument_count)
@@ -158,6 +139,7 @@ class PIDVisionApp:
         self.command_menu.add_command(label="Get OCR", command=self.get_ocr)
         self.command_menu.add_command(label="Get all pages OCR", command=self.get_all_ocr)
         self.command_menu.add_command(label="Open Page Results folder", command=self.open_page_results)
+        #self.command_menu.add_command(label="Print class vairables", command=self.print_class_vars)
 
 
         self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
@@ -208,38 +190,6 @@ class PIDVisionApp:
         self.menu_bar.add_cascade(label="Help", menu=self.help_menu)
 
         self.root.config(menu=self.menu_bar)
-
-    def create_data_window(self):
-        # Create a separate window for displaying captured data
-        self.data_window = tk.Toplevel(self.root)
-        self.data_window.title("Captured Data")
-
-        # Get the screen width and height
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-
-        # Set data window width
-        data_window_width = 250
-
-        # Calculate x position for data window (right side of screen)
-        data_window_x = screen_width - data_window_width
-
-        # Set the geometry of the data_window to be full height and aligned to right
-        self.data_window.geometry(f'{data_window_width}x{screen_height}+{data_window_x}+0')
-
-        # Create a Text widget to display the captured data
-        self.data_text = tk.Text(self.data_window, wrap=tk.WORD, font=("Courier", 14))
-        self.data_text.pack(fill=tk.BOTH, expand=True)
-
-        # Bind the window close event to update the data display
-        self.data_window.protocol("WM_DELETE_WINDOW", self.update_data_display)
-
-        # Ensure data_window is always on top of the root window
-        self.root.bind("<FocusIn>", lambda event: self.data_window.lift())
-
-        # Position the main window to fill the remaining space on the left
-        root_window_width = screen_width - data_window_width
-        self.root.geometry(f'{root_window_width}x{screen_height}+0+0')
 
 
     def create_canvas_and_scrollbars(self):
@@ -795,8 +745,6 @@ class PIDVisionApp:
         # plt.show()
         return img
 
-    def set_minscore(self):
-        self.minscore_inst = tk.simpledialog.askfloat(prompt="Enter Object Minscore", title="Enter Object Minscore", initialvalue=self.minscore_inst)
     def set_comment_box_expand(self):
         self.minscore_inst = tk.simpledialog.askinteger(prompt="Enter Comment Box Expand", title="Enter Comment Box Expand", initialvalue=self.comment_box_expand)
 
@@ -881,36 +829,223 @@ class PIDVisionApp:
             print(f"File saved as: {save_location}")
         except:
             print(f"Save to {save_location} failed")
-    def append_data_with_xlwings(self):
-        # Check if the file exists, if not, create a new workbook
-        if not os.path.exists(self.workbook_path):
-            self.wb = xw.Book()
-            self.wb.save(self.workbook_path)
 
-        wb = xw.Book(self.workbook_path)
-        if 'Instrument Index' not in wb.sheet_names:
-            wb.sheets.add(name='Instrument Index')
+    def create_data_window(self):
+        self.data_window = tk.Toplevel(self.root)
+        self.data_window.title("Captured Data")
 
-        ws = wb.sheets['Instrument Index']
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        data_window_width = 250
+        data_window_x = screen_width - data_window_width
+        self.data_window.geometry(f'{data_window_width}x{screen_height}+{data_window_x}+0')
+
+        # Create a frame to hold all widgets
+        self.data_frame = ttk.Frame(self.data_window)
+        self.data_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # PID Entry
+        ttk.Label(self.data_frame, text="PID:").pack(anchor='w')
+        self.pid_entry = ttk.Entry(self.data_frame)
+        self.pid_entry.pack(fill=tk.X, padx=5, pady=(0, 10))
+
+        # Page display (non-editable)
+        self.page_label = ttk.Label(self.data_frame, text="")
+        self.page_label.pack(anchor='w', pady=(0, 10))
+
+        # Line Entry
+        ttk.Label(self.data_frame, text="Line:").pack(anchor='w')
+        self.line_entry = ttk.Entry(self.data_frame)
+        self.line_entry.pack(fill=tk.X, padx=5, pady=(0, 10))
+
+        # Service In Entry
+        ttk.Label(self.data_frame, text="Service In:").pack(anchor='w')
+        self.service_in_entry = ttk.Entry(self.data_frame)
+        self.service_in_entry.pack(fill=tk.X, padx=5, pady=(0, 10))
+
+        # Service Out Entry
+        ttk.Label(self.data_frame, text="Service Out:").pack(anchor='w')
+        self.service_out_entry = ttk.Entry(self.data_frame)
+        self.service_out_entry.pack(fill=tk.X, padx=5, pady=(0, 10))
+
+        # Equipment Entry
+        ttk.Label(self.data_frame, text="Equipment:").pack(anchor='w')
+        self.equipment_entry = ttk.Entry(self.data_frame)
+        self.equipment_entry.pack(fill=tk.X, padx=5, pady=(0, 10))
+
+        # Comment Entry
+        ttk.Label(self.data_frame, text="Comment:").pack(anchor='w')
+        self.comment_entry = ttk.Entry(self.data_frame)
+        self.comment_entry.pack(fill=tk.X, padx=5, pady=(0, 10))
+
+        # Modify entry creation sections to add FocusOut binding
+        self.pid_entry.bind('<FocusOut>', lambda e: self.get_data_from_window())
+        self.line_entry.bind('<FocusOut>', lambda e: self.get_data_from_window())
+        self.service_in_entry.bind('<FocusOut>', lambda e: self.get_data_from_window())
+        self.service_out_entry.bind('<FocusOut>', lambda e: self.get_data_from_window())
+        self.equipment_entry.bind('<FocusOut>', lambda e: self.get_data_from_window())
+        self.comment_entry.bind('<FocusOut>', lambda e: self.get_data_from_window())
+
+
+
+        # Instrument Data Tree
+        ttk.Label(self.data_frame, text="Instrument Data:").pack(anchor='w')
+        self.inst_tree = ttk.Treeview(self.data_frame, columns=('Tag', 'Tag No', 'Type'), show='headings', height=10)
+        self.inst_tree.heading('Tag', text='Tag')
+        self.inst_tree.heading('Tag No', text='Tag No')
+        self.inst_tree.heading('Type', text='Type')
+        self.inst_tree.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        # Add scrollbar for tree
+        scrollbar = ttk.Scrollbar(self.data_frame, orient=tk.VERTICAL, command=self.inst_tree.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.inst_tree.configure(yscrollcommand=scrollbar.set)
+
+        # Bind double-click event for editing instrument data
+        self.inst_tree.bind('<Double-1>', self.edit_instrument)
+
+        self.data_window.protocol("WM_DELETE_WINDOW", self.update_data_display)
+        self.root.bind("<FocusIn>", lambda event: self.data_window.lift())
+
+        # Position main window
+        root_window_width = screen_width - data_window_width
+        self.root.geometry(f'{root_window_width}x{screen_height}+0+0')
+
+    def update_data_display(self):
+        # Update entries with current values
+        self.pid_entry.delete(0, tk.END)
+        self.pid_entry.insert(0, str(self.pid) if self.pid else "")
+
+        self.page_label.config(text=f"Page: {self.current_image_index + 1} of {len(self.image_list)}")
+
+        self.line_entry.delete(0, tk.END)
+        self.line_entry.insert(0, str(self.line) if self.line else "")
+
+        self.service_in_entry.delete(0, tk.END)
+        self.service_in_entry.insert(0, condense_hyphen_string(self.service_in) if self.service_in else "")
+
+        self.service_out_entry.delete(0, tk.END)
+        self.service_out_entry.insert(0, condense_hyphen_string(self.service_out) if self.service_out else "")
+
+        self.equipment_entry.delete(0, tk.END)
+        self.equipment_entry.insert(0, str(self.equipment) if self.equipment else "")
+
+        self.comment_entry.delete(0, tk.END)
+        self.comment_entry.insert(0, str(self.comment) if self.comment else "")
+
+        # Clear and update instrument tree
+        for item in self.inst_tree.get_children():
+            self.inst_tree.delete(item)
 
         for data in self.inst_data:
+            self.inst_tree.insert('', tk.END, values=(data['tag'], data['tag_no'], data['type']))
 
+    def append_data_to_excel(self):
+        try:
+            self.append_data(self.write_mode)
+        except Exception as e:
+            tk.messagebox.showerror(e)
+            print(f"error {e}")
+
+    def get_data_from_window(self):
+        """Retrieve data from the window widgets and update instrument data"""
+        self.pid = self.pid_entry.get()
+        self.line = self.line_entry.get()
+        self.service_in = self.service_in_entry.get()
+        self.service_out = self.service_out_entry.get()
+        self.equipment = self.equipment_entry.get()
+        self.comment = self.comment_entry.get()
+
+        # Update existing instrument data while preserving structure
+        updated_data = []
+        for item in self.inst_tree.get_children():
+            values = self.inst_tree.item(item)['values']
+            inst_dict = {
+                'tag': values[0],
+                'tag_no': values[1],
+                'type': values[2]
+            }
+            # Preserve any existing additional data
+            if self.inst_data:
+                existing = next((d for d in self.inst_data if d['tag'] == values[0]), {})
+                inst_dict.update({k: v for k, v in existing.items() if k not in ['tag', 'tag_no', 'type']})
+            updated_data.append(inst_dict)
+
+        self.inst_data = updated_data
+
+    def edit_instrument(self, event):
+        """Handle double-click editing of instrument data"""
+        item = self.inst_tree.selection()[0]
+        values = self.inst_tree.item(item)['values']
+
+        # Create popup window for editing
+        edit_window = tk.Toplevel(self.data_window)
+        edit_window.title("Edit Instrument")
+
+        ttk.Label(edit_window, text="Tag:").grid(row=0, column=0, padx=5, pady=5)
+        tag_entry = ttk.Entry(edit_window)
+        tag_entry.insert(0, values[0])
+        tag_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(edit_window, text="Tag No:").grid(row=1, column=0, padx=5, pady=5)
+        tag_no_entry = ttk.Entry(edit_window)
+        tag_no_entry.insert(0, values[1])
+        tag_no_entry.grid(row=1, column=1, padx=5, pady=5)
+
+        ttk.Label(edit_window, text="Type:").grid(row=2, column=0, padx=5, pady=5)
+        type_entry = ttk.Entry(edit_window)
+        type_entry.insert(0, values[2])
+        type_entry.grid(row=2, column=1, padx=5, pady=5)
+
+        def save_changes():
+            self.inst_tree.item(item, values=(tag_entry.get(), tag_no_entry.get(), type_entry.get()))
+            edit_window.destroy()
+
+        ttk.Button(edit_window, text="Save", command=save_changes).grid(row=3, column=0, columnspan=2, pady=10)
+
+    def append_data(self, excel_type='xlwings'):
+        """
+        Append data to Excel file using either xlwings or openpyxl.
+
+        Args:
+            excel_type (str): Either 'xlwings' or 'openpyxl'
+        """
+        self.get_data_from_window()
+
+        # Initialize workbook and worksheet
+        if excel_type == 'xlwings':
+            if not os.path.exists(self.workbook_path):
+                self.wb = xw.Book()
+                self.wb.save(self.workbook_path)
+            wb = xw.Book(self.workbook_path)
+            if 'Instrument Index' not in wb.sheet_names:
+                wb.sheets.add(name='Instrument Index')
+            ws = wb.sheets['Instrument Index']
+        else:  # openpyxl
+            if not os.path.exists(self.workbook_path):
+                self.wb = openpyxl.Workbook()
+            elif not self.wb:
+                self.wb = openpyxl.load_workbook(self.workbook_path)
+            if 'Instrument Index' not in self.wb.sheetnames:
+                self.ws = self.wb.create_sheet('Instrument Index')
+            else:
+                self.ws = self.wb['Instrument Index']
+            ws = self.ws
+
+        for data in self.inst_data:
+            # Initialize default data dictionary
             data.update({
-                'PID': '',
+                'PID': self.pid,
                 'SERVICE': '',
                 'LINE/EQUIP': '',
-                'INPUT COMMENT': '',
-                'FILE': '',
+                'INPUT COMMENT': self.comment if self.comment else '',
+                'FILE': self.image_path,
             })
 
-            last_row = ws.range('A1').expand('down').last_cell.row
-            data['PID'] = self.pid
-
+            # Process service information
             si = condense_hyphen_string(self.service_in)
             so = condense_hyphen_string(self.service_out)
 
-
-            # Handle service and line/equipment logic
             if self.service_in and self.service_out:
                 data['SERVICE'] = f"{si} TO {so}" if self.service_in != self.service_out else f"{si} RECIRCULATION"
             elif self.service_in:
@@ -918,6 +1053,7 @@ class PIDVisionApp:
             elif self.service_out:
                 data['SERVICE'] = f"TO {so}"
 
+            # Process line/equipment information
             if self.line:
                 data['LINE/EQUIP'] = self.line
             elif self.equipment:
@@ -925,75 +1061,36 @@ class PIDVisionApp:
                 data['LINE/EQUIP'] = words[0]
                 data['SERVICE'] = ' '.join(words[1:])
 
+            # Get last row and handle header
+            if excel_type == 'xlwings':
+                last_row = ws.range('A1').expand('down').last_cell.row if ws.range('A1').value is not None else 0
+            else:
+                last_row = len(list(ws.rows))
 
-            if self.comment:
-                data['INPUT COMMENT'] = self.comment
-
-            data['FILE'] = self.image_path
-
-            if ws.range('A1').value is None:  # Check if header doesn't exist
+            if (excel_type == 'xlwings' and ws.range('A1').value is None) or \
+                    (excel_type == 'openpyxl' and ws['A1'].value is None):
                 self.create_excel_header(ws, data)
+                last_row = 0
 
             self.populate_excel_row(ws, data, last_row + 1)
 
-        self.turn_boxes_blue()
-
-    def append_data_with_openpyxl(self):
-        print('starting fn')
-        # Check if the file exists, if not, create a new workbook
-        if not os.path.exists(self.workbook_path):
-            self.wb = openpyxl.Workbook()
-            #self.wb.save(workbook_path)
-        else:
-            if not self.wb:
-                self.wb = openpyxl.load_workbook(self.workbook_path)
-                print('wb loaded')
-
-        # Check if the 'Instrument Index' sheet exists, if not, create it
-        if 'Instrument Index' not in self.wb.sheetnames:
-            self.ws = self.wb.create_sheet('Instrument Index')
-            # Define the header row
-            header = ['PID', 'TAG', 'TAG_NO', 'LABEL', 'LINE/EQUIP', 'SERVICE', 'COMMENT']
-            # Write the header row to the first sheet of the workbook
-            self.ws.append(header)
-        else:
-            self.ws = self.wb['Instrument Index']
-
-        print('starting data append')
-        # Append data to the worksheet
-        for data in self.inst_data:
-            row = [self.pid, data['tag'], data['tag_no'], data['label']]
-
-            if self.service_in and self.service_out:
-                row.append(self.service_in + ' TO ' + self.service_out)
-            elif self.service_in:
-                row.append('FROM ' + self.service_in)
-            elif self.service_out:
-                row.append('TO ' + self.service_out)
-            else:
-                row.append('')
-
-            if self.line:
-                row.append(self.line)
-            elif self.equipment:
-                words = self.equipment.split(' ')
-                row.append(words[0])
-                if len(words) > 1:
-                    row.append(' '.join(words[1:]))
-                else:
-                    row.append('')
-            else:
-                row.extend(['', ''])
-
-            if self.comment:
-                row.append(self.comment)
-            else:
-                row.append('')
-
-            self.ws.append(row)
-
+        if excel_type == 'openpyxl':
+            self.wb.save(self.workbook_path)
 
         self.turn_boxes_blue()
+
+    def turn_boxes_blue(self):
+        # Slice the list to get the last 4 items
+        active_boxes = self.persistent_boxes[-self.active_inst_box_count:]
+
+        # Iterate over the sliced list and change the outline color of each item
+        for box_id in active_boxes:
+            self.canvas.itemconfig(box_id, outline='#87CEEB', fill='#87CEEB')
+
+        self.active_inst_box_count = 0
+        self.inst_data = []
+        #self.comment = ''
+        self.update_data_display()
 
     def create_excel_header(self, worksheet, data):
         """
@@ -1015,19 +1112,20 @@ class PIDVisionApp:
                 # Get the last row in the worksheet
                 last_row = worksheet.cells.last_cell.row
                 # Format the entire column from row 1 to last row
-                column_range = worksheet.range((1, i), (last_row, i))
-                column_range.number_format = '@'
+            column_range = worksheet.range((1, 2), (last_row, 2))
+            column_range.number_format = '@'
 
         elif isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
             # openpyxl worksheet
-            for col, item in enumerate(header, start=1):
-                cell = worksheet.cell(row=1, column=col, value=item)
-                # Format entire column as text
-                column_letter = openpyxl.utils.get_column_letter(col)
-                for cell in worksheet[column_letter]:
-                    cell.number_format = '@'
+            for col, column_header in enumerate(header, start=1):
+                worksheet.cell(row=1, column=col).value = column_header
+            # Format entire column as text
+            column_letter = openpyxl.utils.get_column_letter(2)
+            for cell in worksheet[column_letter]:
+                cell.number_format = '@'
         else:
             raise ValueError("Unsupported worksheet type")
+
     def populate_excel_row(self, worksheet, data, row):
         """
         Populate a row in the given worksheet with the provided data.
@@ -1049,48 +1147,11 @@ class PIDVisionApp:
 
             if value is not None:
                 cell.value = str(value)
-
-    def populate_excel_row_adv(self, worksheet, data, row):
-        """
-        Populate a row in the given worksheet with the provided data.
-
-        :param worksheet: The worksheet to populate (either xlwings or openpyxl worksheet)
-        :param data: A dictionary containing the data to be written
-        :param row: The row number to populate
-        :return: None
-        """
-        for col, (key, value) in enumerate(data.items(), start=1):
-            if isinstance(worksheet, xw.main.Sheet):
-                # xlwings worksheet
-                cell = worksheet.range((row, col))
-            elif isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
-                # openpyxl worksheet
-                cell = worksheet.cell(row=row, column=col)
             else:
-                raise ValueError("Unsupported worksheet type")
+                cell.value = ''
 
-            if key == 'image' and value is not None:
-                # Handle image insertion
-                img_rgb = cv2.cvtColor(value, cv2.COLOR_BGR2RGB)
-                pil_img = Image.fromarray(img_rgb)
-                img_byte_arr = io.BytesIO()
-                pil_img.save(img_byte_arr, format='PNG')
-                img_byte_arr = img_byte_arr.getvalue()
-
-                if isinstance(worksheet, xw.main.Sheet):
-                    cell.add_picture(io.BytesIO(img_byte_arr))
-                else:
-                    excel_image = xlImage(io.BytesIO(img_byte_arr))
-                    worksheet.add_image(excel_image, cell.coordinate)
-            elif key == 'file':
-                cell.hyperlink = value
-                cell.value = value
-            elif key == 'box':
-                rounded_list = value.tolist()
-                int_list = [int(x) for x in rounded_list]
-                cell.value = str(int_list)
-            else:
-                cell.value = str(value)
+        if isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
+            worksheet.parent.save(self.workbook_path)
 
     def make_pid_page_xlsx(self):
 
@@ -1191,20 +1252,10 @@ class PIDVisionApp:
                 print(f"Error saving file: {e}")
                 counter += 1
 
-    def auto_generate_index(self):
-        self.page_setup() #load both models if necessary, create results folder and load self.img
-        output_file = openpyxl.Workbook()
-        self.output_sheet = output_file.active
-
-        self.process_pid_image()
-
-        self.output_file_path = os.path.join(self.folder_path, 'page_' + str(self.current_image_index) + '.xlsx')
-        output_file.save(self.output_file_path)
-
     def get_ocr(self):
         self.ocr_results = HardOCR(self.cv2img, self.reader, self.reader_settings)
         img_ocr_results = plot_ocr_results(self.cv2img, self.ocr_results)
-
+        print(self.ocr_results)
         # save a pic
         cv2.imwrite(os.path.join(self.results_folder, 'ocr_img.png'), img_ocr_results)
 
@@ -1229,171 +1280,6 @@ class PIDVisionApp:
             print('error loading ocr results. setting results to none')
             self.ocr_results = None
 
-    def process_pid_image(self):
-
-
-        self.ocr_results = HardOCR(self.img, self.reader, self.reader_settings)
-        ocr_img = plot_ocr_results(self.img, self.ocr_results)
-        cv2.imwrite(os.path.join(self.results_folder, 'ocr_img.png'), ocr_img)
-
-        labels, boxes, scores = model_predict_on_mosaic(self.img, self.model_inst, threshold=self.nms_threshold)
-        inst_img = plot_pic(self.img, labels, boxes, scores)
-        cv2.imwrite(os.path.join(self.results_folder, 'inst_img.png'), inst_img)
-        #(prediction_data, img, clip, reader, minscore, correct_fn, rs):
-
-        inst_prediction_data = zip(labels, boxes, scores)
-
-        inst_data = return_inst_data(inst_prediction_data, self.img, self.reader,
-                                     self.minscore_inst, self.instrument_reader_settings)
-
-        print(len(inst_data), 'instruments captured')
-        self.get_equipment_and_services()
-        cv2.imwrite(os.path.join(self.results_folder, 'equipment_results_img.png'), self.equipment_results_img)
-
-        self.re_lines =  r'^[0-9]{5}-.*'
-        self.re_equipment = r'^[A-Z]{2,3}-[0-9]{4}.?'
-        self.erosion = 10
-        self.shrink_factor = 4
-        self.lower_thresh = 128
-        self.line_box_expand = 20
-        self.equipment_box_expand = 100
-        self.inst_tag_blacklist = 'mw, sp'
-        self.include_dcs = 0
-        line_img, equipment_img, service_in_img, service_out_img, lines, line_colors, equipments, services_in, services_out =\
-            process_images_and_data(
-            self.img,
-            self.img_no_equipment,
-            self.img,
-            self.ocr_results,
-            self.re_lines,
-            self.re_equipment,
-            self.erosion,
-            self.shrink_factor,
-            self.lower_thresh,
-            self.line_box_expand,
-            self.services,
-            self.valid_equipment_boxes,
-            self.equipment_box_expand,
-            self.include_inside,
-            self.shrink_factor
-        )
-
-        #cv2.imwrite(os.path.join(self.results_folder, 'line_img.png'), line_img)
-        #cv2.imwrite(os.path.join(self.results_folder, 'service_in.png'), service_in_img)
-        #cv2.imwrite(os.path.join(self.results_folder, 'service_out.png'), service_out_img)
-        #cv2.imwrite(os.path.join(self.results_folder, 'equipment_img.png'), equipment_img)
-
-        print(f'services in {services_in}')
-        alldata = []
-
-        for inst in inst_data:
-            print(inst)
-            tag, tag_no, box, itype = inst['tag'], inst['tag_no'], inst['box'], inst['type']
-
-            blacklist = self.inst_tag_blacklist.upper().split(', ')
-            if tag.upper() in blacklist:
-                continue
-
-            data = {'page': self.current_image_index, 'pid_id': self.pid, 'box': box, 'tag': tag, 'tag_no': tag_no, 'label': itype}
-            print(data)
-            other_data = get_row_info(box, line_img, equipment_img, service_in_img, service_out_img, self.shrink_factor, lines,
-                                      line_colors, equipments, services_in, services_out)
-            data.update(other_data)
-
-            #data.update({'comment': comment, 'alarm': alarm, 'sis': ''})
-            alldata.append(data)
-
-        img_sis = process_image(self.img, self.erosion, self.shrink_factor, self.lower_thresh)
-        figure_out_if_instrument_has_sis(alldata, img_sis, self.shrink_factor)
-
-        if alldata:
-            headers = list(alldata[0].keys())
-            self.output_sheet.append(headers)
-
-            for data in alldata:
-                write_row(data, self.output_sheet, include_dcs=self.include_dcs)
-
-            expand_columns_to_fit(self.output_sheet)
-
-    def page_setup(self):
-
-        if self.model_equip == None:
-            labels = ['tank', 'pump', 'service_in', 'service_out']
-            # load instrument recognition model
-            self.model_equip = Model.load(self.model_equipment_path, labels)
-
-        if self.model_inst == None:
-            # load instrument recognition model
-            self.model_inst = Model.load(self.model_inst_path, self.labels)
-            self.load_model()
-
-        #self.page_number = self.sorted_pages[0]
-        # create a folder to save the result images to
-        self.results_folder = os.path.join(self.folder_path, f'results_page_{str(self.current_image_index)}')
-        # print(self.results_folder)
-        if not os.path.exists(self.results_folder):
-            os.makedirs(self.results_folder)
-
-
-        # convert page number to a file
-        self.image_filename = os.path.join(self.folder_path, 'page_' + str(self.current_image_index) + '.png')
-        image_path = os.path.join(self.folder_path, self.image_filename)
-        self.img = cv2.imread(image_path)
-
-    def get_equipment_and_services(self):
-        #shouldn't have to do this but the code is inefficient
-        self.page_setup()
-        #image_path = os.path.join(self.folder_path, self.image_filename)
-        #self.img = cv2.imread(image_path)
-        self.minscore_service = 0.7
-        self.minscore_equipment = 0.7
-        self.service_comment_expand = 20
-        self.include_inside = True
-        self.comment_remove_pattern = None
-
-        # labels, boxes, scores = self.model_equipment.predict(img)
-        # plot_prediction_grid(model, [img], figsize=(45,45), score_filter=0)
-        if not self.equipment_defined:
-            self.equip_labels, self.equip_boxes, self.equip_scores = self.model_equip.predict(self.img)
-        self.equipment_defined = False # this is just a flag that say user has not predfined the labels, boxes, and scores
-
-        # these need to have a self because they may be predefined
-        self.valid_equipment_boxes = [] # score above minscore
-        self.services = []
-
-        self.equipment_results_img = plot_pic(self.img, self.equip_labels, self.equip_boxes, self.equip_scores,
-                                              minscore=.5)
-
-        self.img_no_equipment = copy.copy(self.img)
-        for label, box, score in zip(self.equip_labels, self.equip_boxes, self.equip_scores):
-
-            if (label == 'tank' or label == 'pump'):
-                if score > self.minscore_equipment:
-                    x1 = int(box[0])
-                    y1 = int(box[1])
-                    x2 = int(box[2])
-                    y2 = int(box[3])
-                    # white out box
-                    print(f"x1 = {x1}, y1 = {y1}, x2 = {x2}, y2 = {y2}")
-                    pt1 = (x1, y1)
-                    pt2 = (x2, y2)
-                    self.valid_equipment_boxes.append(box)
-                    # check if there is a equipment name close by
-
-                    # draw boxes for viewing results
-                    cv2.rectangle(self.img_no_equipment, pt1, pt2, (255, 255, 255), cv2.FILLED)
-
-            if label == 'service_in' or label == 'service_out':
-                if score > self.minscore_service:
-                    # here we want to create a list of services
-                    # service = (text, box, line)
-                    # then for service in services
-                    # get_comment(ocr_results, box, box_expand)
-                    text = get_comment(self.ocr_results, box, self.service_comment_expand, include_inside=self.include_inside,
-                                       remove_pattern=self.comment_remove_pattern)
-                    print(f'{label}: {text}')
-                    # line = ''
-                    self.services.append([text, label, box])
 
     def set_write_mode(self, mode):
         self.write_mode = mode
@@ -1635,22 +1521,6 @@ class PIDVisionApp:
                 self.go_to_page(self.current_image_index)
             else:
                 self.go_to_page(1)
-    def append_data_to_excel(self):
-        try:
-            # Example data to append
-
-            if self.write_mode == 'xlwings':
-                self.append_data_with_xlwings()
-            elif self.write_mode == 'openpyxl':
-                self.append_data_with_openpyxl()
-            else:
-                raise ValueError(f"Invalid write mode: {self.write_mode}")
-
-
-        except Exception as e:
-            tk.messagebox.showerror(e)
-            print(f"error {e}")
-
 
     def save_workbook(self):
         # Save the workbook
@@ -1659,19 +1529,6 @@ class PIDVisionApp:
             print('wb saved')
         else:
             print('not in openpyxl write mode. cant save')
-
-    def turn_boxes_blue(self):
-        # Slice the list to get the last 4 items
-        active_boxes = self.persistent_boxes[-self.active_inst_box_count:]
-
-        # Iterate over the sliced list and change the outline color of each item
-        for box_id in active_boxes:
-            self.canvas.itemconfig(box_id, outline='#87CEEB', fill='#87CEEB')
-
-        self.active_inst_box_count = 0
-        self.inst_data = []
-        self.comment = ''
-        self.update_data_display()
 
     def set_comment(self):
         self.comment = tk.simpledialog.askstring("Input", "Please enter a Comment:")
@@ -1864,20 +1721,6 @@ class PIDVisionApp:
 
     def capture_service_out(self, cropped_image):
         self.process_captured_text(cropped_image, 'service_out')
-    def update_data_display(self):
-
-        self.data_text.delete('1.0', tk.END)  # Clear the text box
-
-        self.data_text.insert(tk.END, f"PID: {self.pid}\n")
-        self.data_text.insert(tk.END, f"Page: {self.current_image_index + 1} of {len(self.image_list)}\n")
-        self.data_text.insert(tk.END, f"Line: {self.line}\n\n")
-        self.data_text.insert(tk.END, f"Service In: {condense_hyphen_string(self.service_in)}\n\n")
-        self.data_text.insert(tk.END, f"Service Out: {condense_hyphen_string(self.service_out)}\n\n")
-        self.data_text.insert(tk.END, f"Equipment:{self.equipment}\n\n")
-        self.data_text.insert(tk.END, f"Comment: {self.comment}\n\n")
-        self.data_text.insert(tk.END, f"Instrument Data:\n\n")
-        for data in self.inst_data:
-            self.data_text.insert(tk.END, f"{data['tag']}\t{data['tag_no']}\t{data['type']}\n")
 
 def set_window_logo(window, png_path, size=(64, 64)):
     """

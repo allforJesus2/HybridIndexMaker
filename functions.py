@@ -339,7 +339,7 @@ def find_closest_other(inst_center, group_other, current_label, radius, valid_ty
         valid_types: Optional list of valid type labels to consider
     """
     min_distance = radius
-    closest_label = None
+    closest_label = ''
 
 
 
