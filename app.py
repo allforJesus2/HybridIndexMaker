@@ -6,6 +6,7 @@ from detecto_gui import ObjectDetectionApp
 from easyocr_mosaic import *
 from find_an_instrument import FindAnInstrumentApp
 from functions import *
+from group_manager import GroupManager
 from image_editor import ImageEditor
 from minscore_edit import SliderApp
 from model_predict_mosaic import *
@@ -100,7 +101,7 @@ class PIDVisionApp:
         # Create a menu bar
         self.menu_bar = tk.Menu(self.root)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.file_menu.add_command(label="Open Folder", command=self.open_folder)
+        self.file_menu.add_command(label="Open Project Folder", command=self.open_folder)
         self.file_menu.add_command(label="Open Current Image", command=self.open_image_path)
         self.file_menu.add_command(label="Open Index", command=self.open_workbook)
 
@@ -173,7 +174,7 @@ class PIDVisionApp:
         self.settings_menu.add_command(label="General Reader Settings", command=self.open_general_reader_settings)
         self.settings_menu.add_command(label="instrument comment box expand", command=self.set_comment_box_expand)
         self.settings_menu.add_command(label="Tag Prefix Groups", command=self.set_tag_label_groups)
-        self.settings_menu.add_command(label="Instrument Groups", command=self.catergorize_labels)
+        self.settings_menu.add_command(label="Instrument Groups", command=self.categorize_labels)
         self.settings_menu.add_command(label="Group Association radius", command=self.set_association_radius)
         self.settings_menu.add_command(label="Object Min Scores", command=self.set_object_scores)
         self.settings_menu.add_command(label="object box expand %", command=self.set_object_box_expand)
@@ -961,9 +962,9 @@ class PIDVisionApp:
         for item in self.inst_tree.get_children():
             values = self.inst_tree.item(item)['values']
             inst_dict = {
-                'tag': values[0],
-                'tag_no': values[1],
-                'type': values[2]
+                'tag': values[0] if values[0] else '',  # Ensure empty string instead of None
+                'tag_no': values[1] if values[1] else '',  # Ensure empty string instead of None
+                'type': values[2] if values[2] else ''  # Ensure empty string instead of None
             }
             # Preserve any existing additional data
             if self.inst_data:
@@ -1070,7 +1071,7 @@ class PIDVisionApp:
             if (excel_type == 'xlwings' and ws.range('A1').value is None) or \
                     (excel_type == 'openpyxl' and ws['A1'].value is None):
                 self.create_excel_header(ws, data)
-                last_row = 0
+                last_row += 1
 
             self.populate_excel_row(ws, data, last_row + 1)
 
@@ -1135,20 +1136,20 @@ class PIDVisionApp:
         :param row: The row number to populate
         :return: None
         """
-        for col, (key, value) in enumerate(data.items(), start=1):
+        # Ensure all dictionary values are strings and empty strings for None
+        processed_data = {k: str(v) if v is not None else '' for k, v in data.items()}
+
+        for col, (key, value) in enumerate(processed_data.items(), start=1):
             if isinstance(worksheet, xw.main.Sheet):
                 # xlwings worksheet
                 cell = worksheet.range((row, col))
+                cell.value = value
             elif isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
                 # openpyxl worksheet
                 cell = worksheet.cell(row=row, column=col)
+                cell.value = value
             else:
                 raise ValueError("Unsupported worksheet type")
-
-            if value is not None:
-                cell.value = str(value)
-            else:
-                cell.value = ''
 
         if isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
             worksheet.parent.save(self.workbook_path)
@@ -1279,7 +1280,6 @@ class PIDVisionApp:
         except:
             print('error loading ocr results. setting results to none')
             self.ocr_results = None
-
 
     def set_write_mode(self, mode):
         self.write_mode = mode
@@ -1534,7 +1534,6 @@ class PIDVisionApp:
         self.comment = tk.simpledialog.askstring("Input", "Please enter a Comment:")
         self.update_data_display()
 
-
     def create_capture_text(self):
         # Remove the previous capture text if it exists
         if hasattr(self, 'capture_text') and self.capture_text:
@@ -1614,10 +1613,11 @@ class PIDVisionApp:
 
         #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.comment, fill="blue", font=("Courier", 12))
 
-    def catergorize_labels(self):
-        def set_group_callback(x,y):
-            self.group_inst, self.group_other = x, y
-        update_groups(self.labels, self.group_inst, self.group_other, self.root, callback=set_group_callback)
+    def categorize_labels(self):
+        manager = GroupManager(self.labels, self.group_inst, self.group_other)
+        manager.run()
+        self.group_inst = manager.group_capture
+        self.group_other = manager.group_association
         print(self.group_other)
 
     def capture_instruments(self, cropped_image):
