@@ -168,8 +168,6 @@ def condense_hyphen_string(s):
             result.append(word)
 
     return ' '.join(result)
-
-
 def pdf2png(pdf_file, target_width):
     doc = fitz.open(pdf_file)
     page = doc[0]  # Assume the first page is representative of the document
@@ -373,7 +371,6 @@ def calculate_center(box):
     center_y = (y_min + y_max) / 2
     return np.array([center_x, center_y])
 
-
 def calculate_distance(center1, center2):
     """Calculate the Euclidean distance between two centers."""
     return np.linalg.norm(center1 - center2)
@@ -397,7 +394,8 @@ def plot_ocr_results(img, results):
 
     # plot_pic2(img_ocr_results,20)
     return img_ocr_results
-def plot_pic(img, labels, boxes, scores, size=5, minscore=.5):
+
+def draw_detection_boxes(img, labels, boxes, scores, size=5, minscore=.5):
     img = copy.copy(img)
     # plot_pic(img,labels,boxes,scores)
     # Define some colors for the boxes and labels
@@ -906,54 +904,6 @@ def update_ocr_box(detecto_equipment_boxes, ocr_equipment, expand_amount):
     ocr_equipment += extra_ocr_equipment  # merege lists
 
     return ocr_equipment
-def get_row_info(box, line_img, equipment_img, service_in_img, service_out_img, img_scale, lines, line_colors,
-                 equipments, services_in, services_out):
-    # this fn is called for each box
-
-
-    color_line = region_mode_color(box, line_img, img_scale)
-    color_equipment = region_mode_color(box, equipment_img, img_scale)
-    color_serv_in = region_mode_color(box, service_in_img, img_scale)
-    color_serv_out = region_mode_color(box, service_out_img, img_scale)
-
-
-    line_id = ''
-    for line, color in zip(lines, line_colors):
-        if color == tuple(color_line):  # if the instruement doesn't get colored its line id is ''
-            line_id = line[1]
-            #line_color = line[3]
-            break
-
-
-    equipment_id = ''
-    equipment_desc = ''
-    for equipment in equipments:
-        if equipment[3] == tuple(color_equipment):  # if the instruement doesn't get colored its line id is ''
-            equipment_id = equipment[1]
-            equipment_desc = equipment[4]#get_equipment_description(equipment, ocr_results)
-            break
-
-    service = ''
-    serv_in, serv_out = '', ''
-
-    for color, txt in services_in:
-        print(f'services in color {color}, service in text {txt}')
-        if color == tuple(color_serv_in):
-            print(f'found a match')
-            serv_in = txt
-            break
-
-    for color, txt in services_out:
-        if color == tuple(color_serv_out):
-            serv_out = txt
-            break
-
-
-
-    data = {'line_id': line_id, 'equipment_id': equipment_id, 'equipment_desc': equipment_desc,
-            'service': service, 'service_in': serv_in, 'service_out': serv_out}
-
-    return data
 def figure_out_if_instrument_has_sis(data, img, shrink_factor):
     # box, tag, tag_no, label, line_id, comment, valve_type, valve_size, inst_alarm, sis = data
     # page, pid, box, tag, tag_no, label, line_id, comment, valve_type, valve_size, inst_alarm
@@ -966,65 +916,6 @@ def figure_out_if_instrument_has_sis(data, img, shrink_factor):
             start = get_box_center(x['box'])
             img_copy = copy.copy(img)
             flood_fill_till_inst_reached(start, tag_no, data, img_copy, shrink_factor)
-def write_row(data, output_sheet, include_dcs=1):
-    # page, pid_id, box, tag, tag_no, label, line_id, comment, valve_type, valve_size, inst_alarm, sis = data
-    # csv_writer.writerow(['page', 'P&ID', 'Instrument Tag', 'Tag No.', 'Type', 'Size', 'Service', 'Line','Comment','Alarm'])
-    def convert_service(srv, eq):
-        if eq:
-            if srv:
-                words = srv.split()
-                if len(words)>=2:
-                    #to or from?
-                    if words[0] == 'TO':
-                        srv = 'FROM ' + eq + ' ' + srv
-                    elif words[0] == 'FROM':
-                        srv = srv + ' TO ' + eq
-            else:
-                srv = eq
-
-        return srv
-
-
-
-
-    '''
-    pid_id = data['pid_id']
-    page = data['page']
-    box = data['box']
-    tag = data['tag']
-    tag_no = data['tag_no']
-    label = data['label']
-    line_id = data['line_id']
-    equipment_id = data['equipment_id']
-    equipment_desc = data['equipment_desc']
-    service = data['service']
-    comment = data['comment']
-    inst_valve = data['inst_valve']
-    valve_size = data['valve_size']
-    inst_alarm = data['inst_alarm']
-    sis = data['sis']
-    srv_in = data['service_in']
-    srv_out = data['service_out']
-    '''
-
-
-    if data['label'] == 'INST':
-        data['service'] = convert_service(data['service'], data['equipment_id'])
-        output_sheet.append([str(value) for key, value in data.items()])
-
-def expand_columns_to_fit(sheet):
-    # Load the Excel workbook
-
-    # Iterate through each row and expand columns to fit the content
-    for row in sheet.iter_rows(min_row=1, max_row=sheet.max_row, max_col=sheet.max_column):
-        for cell in row:
-            if cell.value:
-                # Calculate the width required for the content in the cell
-                column_width = len(str(cell.value)) + 2
-
-                # Adjust column width if it's wider than the current width
-                if sheet.column_dimensions[cell.column_letter].width < column_width:
-                    sheet.column_dimensions[cell.column_letter].width = column_width
 def get_box_center(box):
     x1, y1, x2, y2 = box
     center_x = (x1 + x2) / 2
@@ -1121,3 +1012,4 @@ def load_easyocr_results_pickle(filename='easyocr_results.pkl'):
     except FileNotFoundError:
         print("File not found.")
         return []
+

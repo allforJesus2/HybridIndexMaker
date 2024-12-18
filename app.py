@@ -27,7 +27,11 @@ import tkinter.messagebox
 import tkinter.simpledialog
 import xlwings as xw
 
+
 class PIDVisionApp:
+
+    # region Initialization and Setup
+
     def __init__(self, root):
         # Initialize root window
         self.root = root
@@ -76,7 +80,7 @@ class PIDVisionApp:
         self.update_data_display()
 
         # Initialize captured data
-        self.capture = 'pid'
+        self.capture_mode = 'pid'
 
     def check_initialization(self, init_thread):
         """Check if initialization is complete and show main window"""
@@ -87,15 +91,11 @@ class PIDVisionApp:
             # Initialization complete, show main window
             self.show_main_window()
 
-
     def show_main_window(self):
         """Show the main window and destroy splash screen"""
         self.splash.destroy()
         self.root.deiconify()
         self.root.title("PIDVision.AI")
-
-
-    # region Init stuff
 
     def create_menu_bar(self):
         # Create a menu bar
@@ -124,24 +124,24 @@ class PIDVisionApp:
         self.command_menu.add_command(label="Create images from PDF", command=self.open_pdf2png)
         self.command_menu.add_command(label="Merge pdfs", command=self.merge_pdfs)
 
-        #self.command_menu.add_command(label="Load a Tag Correction Function", command=self.load_correct_fn)
+        # self.command_menu.add_command(label="Load a Tag Correction Function", command=self.load_correct_fn)
         self.command_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
         self.command_menu.add_command(label="Live Write Mode", command=lambda: self.set_write_mode('xlwings'))
         self.command_menu.add_command(label="Silent/quick Write Mode", command=lambda: self.set_write_mode('openpyxl'))
         self.command_menu.add_command(label="Save workbook", command=self.save_workbook)
-        #self.command_menu.add_command(label="Auto Generate Index", command=self.auto_generate_index)
+        # self.command_menu.add_command(label="Auto Generate Index", command=self.auto_generate_index)
         self.command_menu.add_command(label="Generate type xlsx via convolution", command=self.create_tag_type_xlsx)
-        self.command_menu.add_command(label="Generate All pages Instrument Count", command=self.generate_instrument_count)
+        self.command_menu.add_command(label="Generate All pages Instrument Count",
+                                      command=self.generate_instrument_count)
         self.command_menu.add_command(label="Generate Single Page Instrument Count", command=self.one_instrument_count)
-        #self.command_menu.add_command(label="Compile Instrument counts", command=self.compile_excels)
+        # self.command_menu.add_command(label="Compile Instrument counts", command=self.compile_excels)
         self.command_menu.add_command(label="Generate Filename PID xlsx", command=self.make_pid_page_xlsx)
         self.command_menu.add_command(label="Test instrument Model on Image", command=self.test_model_mosaic)
 
         self.command_menu.add_command(label="Get OCR", command=self.get_ocr)
         self.command_menu.add_command(label="Get all pages OCR", command=self.get_all_ocr)
         self.command_menu.add_command(label="Open Page Results folder", command=self.open_page_results)
-        #self.command_menu.add_command(label="Print class vairables", command=self.print_class_vars)
-
+        # self.command_menu.add_command(label="Print class vairables", command=self.print_class_vars)
 
         self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
 
@@ -181,7 +181,6 @@ class PIDVisionApp:
         self.settings_menu.add_command(label="NMS threshold", command=self.set_nms_threshold)
         self.settings_menu.add_command(label="Save Settings", command=self.save_attributes)
 
-
         self.menu_bar.add_cascade(label="Settings", menu=self.settings_menu)
 
         # Create a Help menu
@@ -191,7 +190,6 @@ class PIDVisionApp:
         self.menu_bar.add_cascade(label="Help", menu=self.help_menu)
 
         self.root.config(menu=self.menu_bar)
-
 
     def create_canvas_and_scrollbars(self):
         # Vertical and horizontal scrollbars for canvas
@@ -213,7 +211,7 @@ class PIDVisionApp:
         self.root.columnconfigure(0, weight=1)
 
         self.crop_rectangle = None
-        self.container = None
+        self.image_container = None
 
     def initialize_image_attributes(self):
         # Initialize image attributes
@@ -228,7 +226,7 @@ class PIDVisionApp:
     def initialize_models(self):
         # Initialize instrument and equipment models
         self.model_inst_path = "models/vortex_large.pth"
-        #self.model_equipment_path = "models/equipment_services_v2.pth"
+        # self.model_equipment_path = "models/equipment_services_v2.pth"
 
         print('loading models from ', self.model_inst_path)
         try:
@@ -277,7 +275,7 @@ class PIDVisionApp:
             "allowlist": '',
             "decoder": 'beamsearch',
             "batch_size": 1
-            
+
         }
 
     def initialize_other_attributes(self):
@@ -299,11 +297,11 @@ class PIDVisionApp:
         self.mouse_pressed = False
         self.start_x = 0
         self.start_y = 0
-        self.current_box = None
+        self.current_selection_box = None
         self.current_text = None
         self.wb = None
         self.sheet = None
-        self.capture = 'pid'
+        self.capture_mode = 'pid'
         self.capture_actions = {
             'pid': self.capture_pid,
             'instruments': self.capture_instruments,
@@ -315,8 +313,11 @@ class PIDVisionApp:
         }
         self.whole_page_ocr_results = None
         self.reader = easyocr.Reader(['en'])
-        self.labels = []
-        self.tag_label_groups = {"FE FIT": ["CORIOLIS", "MAGNETIC", "PITOT", "TURBINE", "ULTRASONIC", "VORTEX"], "PCV TCV LCV SDV AV XV HCV FCV FV PV TV LV": ["BALL", "BUTTERFLY", "DIAPHRAM", "GATE", "GLOBE", "KNIFE", "PLUG", "VBALL"], "LE LIT LT": ["GWR", "PR"], "PT PIT PI DPIT": ["SEAL"]}
+        self.detection_labels = []
+        self.tag_label_groups = {"FE FIT": ["CORIOLIS", "MAGNETIC", "PITOT", "TURBINE", "ULTRASONIC", "VORTEX"],
+                                 "PCV TCV LCV SDV AV XV HCV FCV FV PV TV LV": ["BALL", "BUTTERFLY", "DIAPHRAM", "GATE",
+                                                                               "GLOBE", "KNIFE", "PLUG", "VBALL"],
+                                 "LE LIT LT": ["GWR", "PR"], "PT PIT PI DPIT": ["SEAL"]}
         self.group_inst = []
         self.object_box_expand = 0.0
         self.group_other = []
@@ -384,9 +385,225 @@ class PIDVisionApp:
         self.ctrl_held = False
         self.root.bind('<KeyPress-Control_L>', self.ctrl_pressed)
         self.root.bind('<KeyRelease-Control_L>', self.ctrl_released)
+
+    def save_attributes(self):
+        """Save class attributes to a JSON file"""
+        attributes_to_save = [
+            'pid_coords',
+            'current_image_index',
+            'instrument_reader_settings',
+            'reader_settings',
+            'model_inst_path',
+            'labels',
+            'group_inst',
+            'group_other',
+            'comment_box_expand',
+            'association_radius',
+            'min_scores',
+            'tag_label_groups',
+            # Add any other attribute names you want to save here
+        ]
+
+        attributes = {attr_name: getattr(self, attr_name) for attr_name in attributes_to_save}
+
+        attributes_file = os.path.join(self.folder_path, 'attributes.json')
+        with open(attributes_file, 'w') as file:
+            json.dump(attributes, file)
+
+    def load_attributes(self):
+        """Load class attributes from a JSON file"""
+        attributes_file = os.path.join(self.folder_path, 'attributes.json')
+        if os.path.exists(attributes_file):
+            try:
+                with open(attributes_file, 'r') as file:
+                    attributes = json.load(file)
+                    # Automatically load attributes if they exist in the JSON file
+                    for key, value in attributes.items():
+                        if hasattr(self, key):
+                            setattr(self, key, value)
+            except json.JSONDecodeError:
+                print("Error: Invalid JSON file format.")
+        else:
+            print("Attribute file not found. Using default values.")
+
+    def create_capture_text(self):
+        # Remove the previous capture text if it exists
+        if hasattr(self, 'capture_text') and self.capture_text:
+            self.canvas.delete(self.capture_text)
+
+        # Create the capture text
+        self.capture_text = self.canvas.create_text(0, 0, text=self.capture_mode, font=("Arial", 8), fill="orange")
+
+        # Bind the mouse motion event to update the capture text position
+        self.canvas.bind("<Motion>", self.update_capture_text)
+
     # endregion
 
-    # region image scrolling and zooming
+    # region Image Loading and Navigation
+
+    def load_image(self):
+        if self.image_list:
+
+            self.image_path = self.image_list[self.current_image_index]
+            print(self.image_path)
+            name, ext = os.path.splitext(self.image_path)
+            self.results_folder = name + "_results"
+            if not os.path.exists(self.results_folder):
+                os.makedirs(self.results_folder)
+
+            self.original_image = Image.open(self.image_path)
+            self.cv2img = pil_to_cv2(self.original_image)
+
+            self.load_ocr()
+
+            self.width, self.height = self.original_image.size
+
+            # Put image into container rectangle and use it to set proper coordinates to the image
+            self.image_container = self.canvas.create_rectangle(0, 0, self.width, self.height, width=0)
+
+            # Bind events to the canvas
+            self.bind_events_to_canvas()
+
+            # Get the current window size
+            window_width = self.canvas.winfo_width()
+            window_height = self.canvas.winfo_height()
+
+            # Calculate the scaling factor
+            width_ratio = window_width / self.width
+            height_ratio = window_height / self.height
+            scale_factor = min(width_ratio, height_ratio)
+
+            # Calculate new dimensions
+            new_width = int(self.width * scale_factor)
+            new_height = int(self.height * scale_factor)
+
+            # Clear the previous image from the canvas
+            self.canvas.delete("all")
+
+            # Set the initial scale
+            self.imscale = scale_factor
+
+            # Update the scroll region
+            self.canvas.config(scrollregion=(0, 0, new_width, new_height))
+
+            # Create a new image container
+            self.image_container = self.canvas.create_rectangle(0, 0, new_width, new_height, width=0)
+
+            # Show the image
+            self.show_image()
+
+            # Center the image
+            self.center_image()
+
+            self.create_capture_text()
+
+    def center_image(self):
+        # Get the current window size
+        window_width = self.canvas.winfo_width()
+        window_height = self.canvas.winfo_height()
+
+        # Get the current image size
+        bbox = self.canvas.bbox(self.image_container)
+        image_width = bbox[2] - bbox[0]
+        image_height = bbox[3] - bbox[1]
+
+        # Calculate offsets
+        offset_x = 0  # (window_width - image_width) / 2
+        offset_y = 0  # (window_height - image_height) / 2
+
+        # Move the image
+        self.canvas.move(self.image_container, offset_x, offset_y)
+        self.show_image()
+
+    def go_to_page(self, page_index):
+        if self.image_list:
+            if page_index < 0:
+                self.current_image_index = 0  # Set to the first image
+            elif page_index >= len(self.image_list):
+                self.current_image_index = len(self.image_list) - 1  # Set to the last image
+            else:
+                self.current_image_index = page_index
+
+            self.load_image()
+
+            if self.pid_coords:
+                # Crop the image using the scaled coordinates
+                print(self.pid_coords)
+
+                cropped_image = self.original_image.crop(self.pid_coords)
+
+                cropped_image = pil_to_cv2(cropped_image)
+                # this is weird but we need to set the self.cropped coords so that we dont let the last used coord overwrite pid
+                self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
+                self.capture_pid(cropped_image)
+
+                self.update_data_display()
+
+            self.load_ocr()
+
+    def next_image(self):
+        self.go_to_page(self.current_image_index + 1)
+
+    def previous_image(self):
+        self.go_to_page(self.current_image_index - 1)
+
+    def open_go_to_page(self):
+
+        page_index = tk.simpledialog.askinteger("Go to Page", "Enter the page index:")
+
+        if page_index is not None:
+            self.go_to_page(page_index - 1)  # Adjust the index since it's 0-based
+            self.clear_boxes()
+
+    def open_folder(self, given_folder=None):
+
+        self.initialize_models()
+
+        # Define a custom sorting key function
+        def natural_sort_key(s):
+            return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', s)]
+
+        if not given_folder:
+            self.folder_path = filedialog.askdirectory()
+        else:
+            self.folder_path = given_folder
+
+        if self.folder_path:
+            self.workbook_path = os.path.join(self.folder_path, 'index.xlsx')
+
+            self.image_list = [os.path.join(self.folder_path, f) for f in os.listdir(self.folder_path) if
+                               f.endswith(('.png', '.jpg', '.jpeg', '.gif'))]
+            # Sort the collected files using the natural sort key function
+            self.image_list.sort(key=natural_sort_key)
+            self.current_image_index = 0
+            self.load_attributes()
+            if self.current_image_index:
+                self.go_to_page(self.current_image_index)
+            else:
+                self.go_to_page(1)
+
+    def open_pdf2png(self):
+        # Ask for DPI value
+        width = tk.simpledialog.askinteger("DPI", "Enter the image width:", initialvalue=5000)
+
+        # Open file dialog to select PDF file
+        root = tk.Tk()
+        root.withdraw()  # Hide the root window
+        pdf_file = filedialog.askopenfilename(title="Select PDF File", filetypes=[("PDF Files", "*.pdf")])
+
+        if pdf_file and width:
+            # Call the pdf2png function with the selected PDF file and DPI value
+            images_folder = pdf2png(pdf_file, width)
+        else:
+            return
+
+        if tk.messagebox.askyesno("Open the project?"):
+            self.open_folder(images_folder)
+
+    # endregion
+
+    # region Canvas and Image Manipulation
+
     def scroll_y(self, *args, **kwargs):
         ''' Scroll canvas vertically and redraw the image '''
         self.canvas.yview(*args, **kwargs)  # scroll vertically
@@ -410,7 +627,7 @@ class PIDVisionApp:
         ''' Zoom with mouse wheel '''
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
-        bbox = self.canvas.bbox(self.container)  # get image area
+        bbox = self.canvas.bbox(self.image_container)  # get image area
         if bbox[0] < x < bbox[2] and bbox[1] < y < bbox[3]:
             pass  # Ok! Inside the image
         else:
@@ -432,15 +649,15 @@ class PIDVisionApp:
         self.show_image()
 
     def show_image(self, event=None):
-        #print('self.imscale', self.imscale)
+        # print('self.imscale', self.imscale)
         # Get the current horizontal and vertical offsets
         x_offset = self.canvas.xview()[0]
         y_offset = self.canvas.yview()[0]
 
         # Print the offsets (you can adjust the formatting as needed)
-        #print(f"Horizontal Offset: {x_offset}, Vertical Offset: {y_offset}")
+        # print(f"Horizontal Offset: {x_offset}, Vertical Offset: {y_offset}")
         ''' Show image on the Canvas '''
-        bbox1 = self.canvas.bbox(self.container)  # get image area
+        bbox1 = self.canvas.bbox(self.image_container)  # get image area
         # Remove 1 pixel shift at the sides of the bbox1
         bbox1 = (bbox1[0] + 1, bbox1[1] + 1, bbox1[2] - 1, bbox1[3] - 1)
         bbox2 = (self.canvas.canvasx(0),  # get visible area of the canvas
@@ -474,79 +691,15 @@ class PIDVisionApp:
         if self.crop_rectangle:
             self.canvas.tag_raise(self.crop_rectangle)
 
-    def load_image(self):
-        if self.image_list:
+    def update_capture_text(self, event):
+        # Update the text's position to follow the cursor
+        # x, y = event.x, event.y
+        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        self.canvas.coords(self.capture_text, x - 8, y - 8)
 
-            self.image_path = self.image_list[self.current_image_index]
-            print(self.image_path)
-            name, ext = os.path.splitext(self.image_path)
-            self.results_folder = name + "_results"
-            if not os.path.exists(self.results_folder):
-                os.makedirs(self.results_folder)
+    # endregion
 
-            self.original_image = Image.open(self.image_path)
-            self.cv2img = pil_to_cv2(self.original_image)
-
-            self.load_ocr()
-
-            self.width, self.height = self.original_image.size
-
-            # Put image into container rectangle and use it to set proper coordinates to the image
-            self.container = self.canvas.create_rectangle(0, 0, self.width, self.height, width=0)
-
-            # Bind events to the canvas
-            self.bind_events_to_canvas()
-
-            # Get the current window size
-            window_width = self.canvas.winfo_width()
-            window_height = self.canvas.winfo_height()
-
-            # Calculate the scaling factor
-            width_ratio = window_width / self.width
-            height_ratio = window_height / self.height
-            scale_factor = min(width_ratio, height_ratio)
-
-            # Calculate new dimensions
-            new_width = int(self.width * scale_factor)
-            new_height = int(self.height * scale_factor)
-
-            # Clear the previous image from the canvas
-            self.canvas.delete("all")
-
-            # Set the initial scale
-            self.imscale = scale_factor
-
-            # Update the scroll region
-            self.canvas.config(scrollregion=(0, 0, new_width, new_height))
-
-            # Create a new image container
-            self.container = self.canvas.create_rectangle(0, 0, new_width, new_height, width=0)
-
-            # Show the image
-            self.show_image()
-
-            # Center the image
-            self.center_image()
-
-            self.create_capture_text()
-
-    def center_image(self):
-        # Get the current window size
-        window_width = self.canvas.winfo_width()
-        window_height = self.canvas.winfo_height()
-
-        # Get the current image size
-        bbox = self.canvas.bbox(self.container)
-        image_width = bbox[2] - bbox[0]
-        image_height = bbox[3] - bbox[1]
-
-        # Calculate offsets
-        offset_x = 0 # (window_width - image_width) / 2
-        offset_y = 0 # (window_height - image_height) / 2
-
-        # Move the image
-        self.canvas.move(self.container, offset_x, offset_y)
-        self.show_image()
+    # region Cropping and Selection
 
     def start_crop(self, event):
         self.crop_start = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
@@ -558,7 +711,7 @@ class PIDVisionApp:
             x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
             if self.crop_rectangle and self.crop_rectangle not in self.persistent_boxes:
                 self.canvas.delete(self.crop_rectangle)
-            #self.crop_rectangle = self.canvas.create_rectangle(self.crop_start[0], self.crop_start[1], x, y,
+            # self.crop_rectangle = self.canvas.create_rectangle(self.crop_start[0], self.crop_start[1], x, y,
             #                                                   outline='orange')
 
         self.crop_rectangle = self.canvas.create_rectangle(
@@ -600,11 +753,11 @@ class PIDVisionApp:
             print("Image cropped and saved as 'ocr_capture.png'")
 
             # Perform the action based on self.capture
-            if self.capture in self.capture_actions:
-                self.capture_actions[self.capture](self.cropped_image)
+            if self.capture_mode in self.capture_actions:
+                self.capture_actions[self.capture_mode](self.cropped_image)
                 self.update_data_display()
             else:
-                print(f"Invalid capture action: {self.capture}")
+                print(f"Invalid capture action: {self.capture_mode}")
 
             # Clear the crop rectangle
             if self.crop_rectangle not in self.persistent_boxes:
@@ -614,222 +767,136 @@ class PIDVisionApp:
 
     def canvas_to_image(self, canvas_x, canvas_y):
         # Convert canvas coordinates to image coordinates
-        bbox = self.canvas.bbox(self.container)
+        bbox = self.canvas.bbox(self.image_container)
         image_x = int((canvas_x - bbox[0]) / self.imscale)
         image_y = int((canvas_y - bbox[1]) / self.imscale)
         return image_x, image_y
 
+    def clear_boxes(self):
+
+        for box in self.persistent_boxes:
+            self.canvas.delete(box)  # Remove the previous box
+            # self.canvas.delete(text)
+
+        # not sure if this is necessary as zip clears stuff
+        self.persistent_boxes = []
+
     # endregion
 
-    def open_ocr_results_viewer(self):
-        ocr_viewer_window = tk.Toplevel(self.root)
-        OCRViewer(ocr_viewer_window, self.folder_path)
+    # region Data Capture
 
-    def open_workbook(self):
-        os.startfile(self.workbook_path)
-    def set_tag_label_groups(self):
-        group_window = tk.Toplevel(self.root)
-        print(self.tag_label_groups)
-        app = DictionaryBuilder(group_window, self.tag_label_groups, self.labels)
-        self.tag_label_groups = app.run()
-        print(self.tag_label_groups)
-
-    def set_nms_threshold(self):
-        response = tkinter.simpledialog.askfloat(title='Non-Maximum-Supression',
-                                                               prompt='Set NMS overlap threshold (smaller = fewer boxes): ',
-                                                               initialvalue=self.nms_threshold)
+    def capture_pid(self, cropped_image):
+        print('Perform actions for capturing PID')
         try:
-            self.nms_threshold = float(response)
-        except Exception as e:
-            tk.messagebox.showinfo('set NMS fail',e)
-
-    def set_object_box_expand(self):
-        response = tkinter.simpledialog.askfloat(title='Set percent box expand',
-                                                               prompt='Enter the % box expand for group inst',
-                                                               initialvalue=self.object_box_expand)
-        try:
-            self.object_box_expand = float(response)
-        except Exception as e:
-            tk.messagebox.showinfo('set box expand fail',e)
-
-    def open_console(self):
-        self.console_popup.create_console_popup()
-
-    def open_image_path(self):
-        os.startfile(self.image_path)
-
-    def open_page_results(self):
-        os.startfile(self.results_folder)
-
-    def open_detecto_gui(self):
-        detecto_gui_window = tk.Toplevel(self.root)
-        ObjectDetectionApp(detecto_gui_window)
-    def open_FAIA(self):
-        faia_window = tk.Toplevel(self.root)
-        FindAnInstrumentApp(faia_window, img_path=self.image_path)
-
-    def open_image_editor(self):
-        image_editor_window = tk.Toplevel(self.root)
-        ImageEditor(image_editor_window, folder=self.folder_path, image="ocr_capture.png")
-
-    def set_object_scores(self):
-        def set_minscores(score_dict):
-            self.min_scores = score_dict
-
-        slider_window = tk.Toplevel(self.root)
-
-        for label in self.labels:
-            if self.min_scores.get(label):
-                continue
+            # Perform actions for capturing line
+            result = self.reader.readtext(cropped_image, **self.reader_settings)
+            if result:
+                self.pid = ' '.join([box[1] for box in result])
+                self.pid_coords = (self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2)
             else:
-                self.min_scores[label] = self.minscore_inst
+                self.pid = ''
+                print('no result')
+        except Exception as e:
+            print('error capturing pid \n', e)
 
+    def capture_instruments(self, cropped_image):
+        offset = (self.cropped_x1, self.cropped_y1)
+        # Perform actions for capturing instruments
+        # cropped_image = pil_to_cv2(cropped_image)
+        labels, boxes, scores = model_predict_on_mosaic(cropped_image, self.model_inst, threshold=self.nms_threshold)
+        if labels:
+            self.persistent_boxes.append(self.crop_rectangle)
+            print('added ', self.crop_rectangle, ' to persistent boxes')
+            self.active_inst_box_count += 1
+            for i, label in enumerate(labels):
+                print(f"{label}: {scores[i]:.2f} | ", end='')
+            # self.persistent_texts.append(self.current_text)
+            print()
+            inst_prediction_data = zip(labels, boxes, scores)
 
-        SliderApp(slider_window, self.min_scores, callback=set_minscores)
+            inst_data = return_inst_data(inst_prediction_data, cropped_image, self.reader,
+                                         self.instrument_reader_settings, radius=self.association_radius,
+                                         min_scores=self.min_scores, expand=self.object_box_expand,
+                                         offset=offset, comment_box_expand=self.comment_box_expand,
+                                         ocr_results=self.ocr_results,
+                                         inst_labels=self.group_inst, other_labels=self.group_other,
+                                         tag_label_groups=self.tag_label_groups)
 
-    def test_model_mosaic(self):
+            for data in inst_data:
+                print(data)
 
-        test_on_capture = tk.messagebox.askyesno(title='test on capture?',
-                                            message='Do you want to test the model on the Capture?')
+            self.inst_data.extend(inst_data)
 
-        if self.model_inst is None:
-            tk.messagebox.showerror("Error", "Model not loaded. Load a pretrained model first.")
-            return
+    def capture_line(self, cropped_image):
+        self.process_captured_text(cropped_image, 'line')
 
-        minscore = tk.simpledialog.askinteger("Scale percent", "Enter a minscore 1-100:", initialvalue=50)/100
+    def capture_equipment(self, cropped_image):
+        self.process_captured_text(cropped_image, 'equipment')
 
-        if test_on_capture == False:
-            # Ask for an image to test
-            image_path = filedialog.askopenfilename(title="Select an image for testing", initialfile=self.image_path,
-                                                    filetypes=(("PNG files", "*.png"), ("JPEG files", "*.jpg")))
+    def capture_service_in(self, cropped_image):
+        self.process_captured_text(cropped_image, 'service_in')
+
+    def capture_service_out(self, cropped_image):
+        self.process_captured_text(cropped_image, 'service_out')
+
+    def capture_comment(self, cropped_image):
+        print('Perform actions for capturing a comment')
+        # Perform actions for capturing line
+        result = self.reader.readtext(cropped_image, **self.reader_settings)
+        if result:
+            self.comment = ' '.join([box[1] for box in result])
         else:
-            image_path = 'ocr_capture.png'
+            self.comment = ''
 
-        if image_path:
-            image = cv2.imread(image_path)
+    def process_captured_text(self, cropped_image, target_attribute):
+        """
+        Unified method for processing captured text from images.
 
-            labels, boxes, scores = model_predict_on_mosaic(image, self.model_inst, threshold=self.nms_threshold)
+        Args:
+            cropped_image: The image to process
+            target_attribute: String name of attribute to update ('line', 'equipment', 'service_in', 'service_out')
+        """
+        # Handle rotation for line captures only
+        if target_attribute == 'line':
+            height, width = cropped_image.shape[:2]
+            if height > width:
+                cropped_image = cv2.rotate(cropped_image, cv2.ROTATE_90_CLOCKWISE)
 
-            # Overlay boxes and labels on the image
-            img_with_boxes = self.plot_pic(image, labels, boxes, scores, minscore=minscore)
+        # Perform OCR
+        result = self.reader.readtext(cropped_image, **self.reader_settings)
 
-            # Save the image with overlaid boxes and labels
-            # temp_dir = tempfile.gettempdir()
-            output_image_path = "result_image.png"
-            cv2.imwrite(output_image_path, img_with_boxes)
-
-            # Open the saved image using the default image viewer
-            os.startfile(output_image_path)
-
-    def plot_pic(self, img, labels, boxes, scores, size=5, minscore=.3):
-        img = copy.copy(img)
-        # plot_pic(img,labels,boxes,scores)
-        # Define some colors for the boxes and labels
-
-        for label, box, score in zip(labels, boxes, scores):
-            if score > minscore:
-                # Extract the coordinates of the box
-                my_list = box
-                my_list = [int(x) for x in my_list]
-                x1, y1, x2, y2 = my_list
-
-                # Draw a rectangle around the box
-                cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), thickness=2)
-                # Add a label above the box
-                cv2.putText(img, label + ":0." + str(int(float(score * 1000))), (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                            .7,
-                            (255, 0, 0), thickness=2)
-
-        # Display the image with the boxes and labels overlayed using Matplotlib
-        # fig, ax = plt.subplots(figsize=(size, size))
-        # ax.imshow(img)
-        # plt.show()
-        return img
-
-    def set_comment_box_expand(self):
-        self.minscore_inst = tk.simpledialog.askinteger(prompt="Enter Comment Box Expand", title="Enter Comment Box Expand", initialvalue=self.comment_box_expand)
-
-    def set_association_radius(self):
-        self.association_radius = tk.simpledialog.askfloat(prompt="Enter Object association radius", title="Enter association ( Radius", initialvalue=self.association_radius)
-
-    def generate_instrument_count(self):
-
-        ocr_needed = tk.messagebox.askyesno(title='OCR NEEDED?',
-                                            message='Do we need to do OCR (for comments)?\nNote if avaliable we use existing results')
-        type_needed = tk.messagebox.askyesno(title='TYPE NEEDED?',
-                                            message='Do we need to do instrument types?')
-        overwrite = tk.messagebox.askyesno(title='OVERWRITE?',
-                                            message='Do you want to overwrite Existing counts?')
-
-        sure = tk.messagebox.askyesno(title='SURE?',
-                                            message='ARE U SURE')
-        if not sure:
+        if not result:
+            setattr(self, target_attribute, '')
             return
 
-        for i in range(len(self.image_list)):
-            self.go_to_page(i)
-            self.one_instrument_count(overwrite=overwrite)
+        just_text = ' '.join([box[1] for box in result])
+        current_value = getattr(self, target_attribute, '')  # Default to empty string if attribute doesn't exist
 
-        self.compile_excels()
+        # Process text based on modifier keys
+        if self.ctrl_held:
+            new_text = merge_common_substrings(current_value, just_text)
+        elif self.shift_held:
+            new_text = f"{current_value} {just_text}".strip()
+        else:
+            new_text = just_text
 
-    def compile_excels(self):
-        #NOW we compile all the xlsxs into one
-        output_file = compile_excels(self.folder_path, self.folder_path, prefix='Instrument_Count', timestamp=True, recursive=True)
-        if tk.messagebox.askyesno('Open Results?'):
-            os.startfile(output_file)
+        # Update the target attribute
+        setattr(self, target_attribute, new_text)
 
-    def one_instrument_count(self, overwrite=True):
+        # Clear other attributes based on the capture type
+        if target_attribute in ('line', 'equipment'):
+            other_attr = 'equipment' if target_attribute == 'line' else 'line'
+            setattr(self, other_attr, None)
+        elif target_attribute in ('service_in', 'service_out'):
+            self.equipment = None
 
-        save_location = os.path.join(self.results_folder, "Instrument_Count.xlsx")
-        if os.path.exists(save_location) and not overwrite:
-            return
+    def set_capture(self, capture_type):
+        self.capture_mode = capture_type
+        self.canvas.itemconfig(self.capture_text, text=self.capture_mode)
 
-        inst_count_xlsx = openpyxl.Workbook()
-        ws = inst_count_xlsx.active
-        ws.title = 'Instrument Count'
+    # endregion
 
-        img = self.cv2img
-        '''
-        if not self.pid and self.pid_coords:
-            self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
-            cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
-            self.capture_pid(cropped_image)
-        '''
-        labels, boxes, scores = model_predict_on_mosaic(img, self.model_inst, threshold=self.nms_threshold)
-        results = zip(labels, boxes, scores)
-
-        inst_img = plot_pic(img, labels, boxes, scores)
-        cv2.imwrite(os.path.join(self.results_folder, 'inst_img.png'), inst_img)
-
-        inst_data = return_inst_data(results, img, self.reader, self.instrument_reader_settings,
-                                 inst_labels=self.group_inst, other_labels=self.group_other,
-                                 min_scores=self.min_scores, expand=self.object_box_expand,
-                                 comment_box_expand=self.comment_box_expand,
-                                 ocr_results=self.ocr_results, offset=(0,0),
-                                 radius=self.association_radius,
-                                    tag_label_groups=self.tag_label_groups)
-
-        print('there are ',len(inst_data),' inst_data items')
-
-        just_lines_img = remove_objects_from_image(img, inst_data, self.ocr_results)
-        cv2.imwrite(os.path.join(self.results_folder, 'blank.png'), just_lines_img)
-
-        current_row = 1
-        for data in inst_data:
-            data['pid'] = self.pid
-            data['file'] = self.image_path
-            if not ws['A1'].value:  # Check if header doesn't exist
-                print('making header')
-                self.create_excel_header(ws, data)
-                current_row += 1
-
-            self.populate_excel_row(ws, data, current_row)
-            current_row += 1
-        try:
-            inst_count_xlsx.save(save_location)
-            print(f"File saved as: {save_location}")
-        except:
-            print(f"Save to {save_location} failed")
+    # region Data Management
 
     def create_data_window(self):
         self.data_window = tk.Toplevel(self.root)
@@ -887,8 +954,6 @@ class PIDVisionApp:
         self.equipment_entry.bind('<FocusOut>', lambda e: self.get_data_from_window())
         self.comment_entry.bind('<FocusOut>', lambda e: self.get_data_from_window())
 
-
-
         # Instrument Data Tree
         ttk.Label(self.data_frame, text="Instrument Data:").pack(anchor='w')
         self.inst_tree = ttk.Treeview(self.data_frame, columns=('Tag', 'Tag No', 'Type'), show='headings', height=10)
@@ -940,13 +1005,6 @@ class PIDVisionApp:
 
         for data in self.inst_data:
             self.inst_tree.insert('', tk.END, values=(data['tag'], data['tag_no'], data['type']))
-
-    def append_data_to_excel(self):
-        try:
-            self.append_data(self.write_mode)
-        except Exception as e:
-            tk.messagebox.showerror(e)
-            print(f"error {e}")
 
     def get_data_from_window(self):
         """Retrieve data from the window widgets and update instrument data"""
@@ -1080,18 +1138,12 @@ class PIDVisionApp:
 
         self.turn_boxes_blue()
 
-    def turn_boxes_blue(self):
-        # Slice the list to get the last 4 items
-        active_boxes = self.persistent_boxes[-self.active_inst_box_count:]
-
-        # Iterate over the sliced list and change the outline color of each item
-        for box_id in active_boxes:
-            self.canvas.itemconfig(box_id, outline='#87CEEB', fill='#87CEEB')
-
-        self.active_inst_box_count = 0
-        self.inst_data = []
-        #self.comment = ''
-        self.update_data_display()
+    def append_data_to_excel(self):
+        try:
+            self.append_data(self.write_mode)
+        except Exception as e:
+            tk.messagebox.showerror(e)
+            print(f"error {e}")
 
     def create_excel_header(self, worksheet, data):
         """
@@ -1154,104 +1206,56 @@ class PIDVisionApp:
         if isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
             worksheet.parent.save(self.workbook_path)
 
-    def make_pid_page_xlsx(self):
+    def turn_boxes_blue(self):
+        # Slice the list to get the last 4 items
+        active_boxes = self.persistent_boxes[-self.active_inst_box_count:]
 
-        pid_page_xlsx = openpyxl.Workbook()
-        ws = pid_page_xlsx.create_sheet('pid_page')
-        image_folder = filedialog.askdirectory(title='Folder that has PNGs')
-        if self.pid_coords:
+        # Iterate over the sliced list and change the outline color of each item
+        for box_id in active_boxes:
+            self.canvas.itemconfig(box_id, outline='#87CEEB', fill='#87CEEB')
 
-            for filename in os.listdir(image_folder):
-                if filename.endswith(".png") or filename.endswith(".jpg"):
-                    file_path = os.path.join(image_folder, filename)
-                    img = cv2.imread(file_path)
+        self.active_inst_box_count = 0
+        self.inst_data = []
+        # self.comment = ''
+        self.update_data_display()
 
-                    self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
-                    cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
-                    self.capture_pid(cropped_image)
+    def vote(self):
+        # Create a dictionary to store tag_no counts
+        tag_counts = {}
 
-                    row = [filename, self.pid if self.pid else ""]
-                    ws.append(row)
+        # Count the occurrences of each tag_no
+        for data in self.inst_data:
+            tag_no = data['tag_no']
+            tag_counts[tag_no] = tag_counts.get(tag_no, 0) + 1
 
-        counter = 1
-        while True:
-            try:
-                save_location = os.path.join(image_folder, f"pid_page_{counter}.xlsx")
-                pid_page_xlsx.save(save_location)
-                print(f"File saved as: {save_location}")
-                break
-            except Exception as e:
-                print(f"Error saving file: {e}")
-                counter += 1
+        # Find the most frequent tag_no
+        most_frequent_tag_no = max(tag_counts, key=tag_counts.get)
 
-    def create_tag_type_xlsx(self):
-        kernel_folder = filedialog.askdirectory(title='Folder that has Kernels')
-        image_folder = filedialog.askdirectory(title='Folder that has PNGs')
-        scale = tk.simpledialog.askinteger("Scale percent", "Enter a scale percent 1-100:", initialvalue=100)/100
-        expansion_pixels = tk.simpledialog.askinteger("Expand box", "Enter box expansion pixels:", initialvalue=180)
-        confidence = tk.simpledialog.askinteger("Confidence", "Enter convolution confidence threshold:", initialvalue=80)/100
-        rotation = tk.simpledialog.askinteger("Rotation", "Enter rotation directions 1-4:", initialvalue=1)
+        # Assign the most frequent tag_no to each entry
+        for data in self.inst_data:
+            data['tag_no'] = most_frequent_tag_no
 
-        CR = ConvolutionReplacer(kernel_folder, scale, rotation)
+        self.update_data_display()
 
+    def swap_services(self):
+        self.service_in, self.service_out = self.service_out, self.service_in
+        self.update_data_display()
 
-        tag_type_xlsx = openpyxl.Workbook()
-        ws = tag_type_xlsx.create_sheet('tagtype')
-        # Define the header row
-        header = ['TAG', 'TAG_NO', 'TYPE', 'PAGE', 'PID']
-        # Write the header row to the first sheet of the workbook
-        ws.append(header)
+    def set_comment(self):
+        self.comment = tk.simpledialog.askstring("Input", "Please enter a Comment:")
+        self.update_data_display()
 
+    def clear_instrument_group(self):
 
-        #for img in image_folder
-        for filename in os.listdir(image_folder):
-            if filename.endswith(".png") or filename.endswith(".jpg"):
-                file_path = os.path.join(image_folder, filename)
-                img = cv2.imread(file_path)
+        if self.inst_data:
+            for box in self.persistent_boxes[-self.active_inst_box_count:]:
+                self.canvas.delete(box)  # Remove the previous box
+        self.inst_data = []
+        self.update_data_display()
 
-                if self.pid_coords:
-                    self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
-                    cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
-                    self.capture_pid(cropped_image)
+    # endregion
 
-                result_boxes_image, final_detections_rescaled = CR.detect(img, threshold=confidence)
-                #final_detections_rescaled = [(top_left, bottom_right, label, rotation, score)...]
-                cv2.imwrite('temp.png',result_boxes_image)
-                #os.startfile('temp.png')
-
-                for detection in final_detections_rescaled:
-                    label = detection[2]
-
-                    top_left, bottom_right = detection[0], detection[1]
-                    # Expand the box by 100px (adjustable parameter)
-
-                    x1, y1 = int(max(0, top_left[0] - expansion_pixels)), int(max(0, top_left[1] - expansion_pixels))
-                    x2, y2 = int(min(img.shape[1], bottom_right[0] + expansion_pixels)), int(
-                        min(img.shape[0], bottom_right[1] + expansion_pixels))
-
-                    # Crop the image
-                    cropped_image = img[y1:y2, x1:x2]
-
-                    self.capture_instruments(cropped_image)
-
-
-                    for data in self.inst_data:
-                        data['label'] = label
-                        row = [data['tag'], data['tag_no'], data['label'], filename, self.pid if self.pid else ""]
-                        ws.append(row)
-
-                    self.inst_data = []
-
-        counter = 1
-        while True:
-            try:
-                save_location = os.path.join(image_folder, f"tag_type{counter}.xlsx")
-                tag_type_xlsx.save(save_location)
-                print(f"File saved as: {save_location}")
-                break
-            except Exception as e:
-                print(f"Error saving file: {e}")
-                counter += 1
+    # region OCR and Model Operations
 
     def get_ocr(self):
         self.ocr_results = HardOCR(self.cv2img, self.reader, self.reader_settings)
@@ -1281,74 +1285,71 @@ class PIDVisionApp:
             print('error loading ocr results. setting results to none')
             self.ocr_results = None
 
+    def load_model(self):
+        # Create a module specification
+        self.model_inst_path = filedialog.askopenfilename(filetypes=[('PTH Files', '*.pth')])
+        # labels = ['inst', 'dcs', 'ball', 'globe', 'diaphragm', 'knife', 'vball', 'plug', 'butterfly', 'gate']
+        # self.model_inst_path = r"models\saved_model_vid-v3.18_GEVO.pth"
+        # load instrument recognition model
+        print('loading model')
+        self.model_inst = Model.load(self.model_inst_path, self.detection_labels)
+
+    def load_pretrained_model(self, model_path=None):
+        if model_path == None:
+            model_path = filedialog.askopenfilename(title="Select pretrained model file",
+                                                    filetypes=[("Model files", "*.pth")])
+        if model_path:
+            label_path = model_path.replace(".pth", ".txt")
+            if os.path.exists(label_path):
+                with open(label_path, "r") as f:
+                    self.detection_labels = [x.strip() for x in f.read().split(",")]
+                    print(self.detection_labels)
+            else:
+                tk.messagebox.showinfo("Load error", f"{label_path} with comma separated labels not found")
+            print('make sure labels are loaded correctly')
+            self.model_inst = Model.load(model_path, self.detection_labels)
+            print("Pretrained model loaded successfully.")
+
     def set_write_mode(self, mode):
         self.write_mode = mode
 
-    def show_keybindings(self):
-        keybindings = """
-        n/N: Next image
-        b/B: Previous image
-        p/P: Capture PID
-        a/A: Capture Instrument Group
-        f/F: Capture Line
-        e/E: Capture Equipment
-        z/Z: Capture Service In
-        x/X: Capture Service Out
-        w/W: Write Data to Excel
-        c/C: Clear Instrument Group
-        v/V: Vote to normalize tag numbers
-        s/S: Swap Services
-        g/G: Set Comment
-        left shift: add to service with formatting
-        left ctrl: add to service
-        """
-        tk.messagebox.showinfo("Keybindings", keybindings)
+    def test_model_mosaic(self):
 
-    def show_labels(self):
+        test_on_capture = tk.messagebox.askyesno(title='test on capture?',
+                                                 message='Do you want to test the model on the Capture?')
 
-        tk.messagebox.showinfo("object recognition labels", self.labels)
+        if self.model_inst is None:
+            tk.messagebox.showerror("Error", "Model not loaded. Load a pretrained model first.")
+            return
 
+        minscore = tk.simpledialog.askinteger("Scale percent", "Enter a minscore 1-100:", initialvalue=50) / 100
 
-    # Initalization and Project Setup
-    def save_attributes(self):
-        """Save class attributes to a JSON file"""
-        attributes_to_save = [
-            'pid_coords',
-            'current_image_index',
-            'instrument_reader_settings',
-            'reader_settings',
-            'model_inst_path',
-            'labels',
-            'group_inst',
-            'group_other',
-            'comment_box_expand',
-            'association_radius',
-            'min_scores',
-            'tag_label_groups',
-            # Add any other attribute names you want to save here
-        ]
-
-        attributes = {attr_name: getattr(self, attr_name) for attr_name in attributes_to_save}
-
-        attributes_file = os.path.join(self.folder_path, 'attributes.json')
-        with open(attributes_file, 'w') as file:
-            json.dump(attributes, file)
-
-    def load_attributes(self):
-        """Load class attributes from a JSON file"""
-        attributes_file = os.path.join(self.folder_path, 'attributes.json')
-        if os.path.exists(attributes_file):
-            try:
-                with open(attributes_file, 'r') as file:
-                    attributes = json.load(file)
-                    # Automatically load attributes if they exist in the JSON file
-                    for key, value in attributes.items():
-                        if hasattr(self, key):
-                            setattr(self, key, value)
-            except json.JSONDecodeError:
-                print("Error: Invalid JSON file format.")
+        if test_on_capture == False:
+            # Ask for an image to test
+            image_path = filedialog.askopenfilename(title="Select an image for testing", initialfile=self.image_path,
+                                                    filetypes=(("PNG files", "*.png"), ("JPEG files", "*.jpg")))
         else:
-            print("Attribute file not found. Using default values.")
+            image_path = 'ocr_capture.png'
+
+        if image_path:
+            image = cv2.imread(image_path)
+
+            labels, boxes, scores = model_predict_on_mosaic(image, self.model_inst, threshold=self.nms_threshold)
+
+            # Overlay boxes and labels on the image
+            img_with_boxes = draw_detection_boxes(image, labels, boxes, scores, minscore=minscore)
+
+            # Save the image with overlaid boxes and labels
+            # temp_dir = tempfile.gettempdir()
+            output_image_path = "result_image.png"
+            cv2.imwrite(output_image_path, img_with_boxes)
+
+            # Open the saved image using the default image viewer
+            os.startfile(output_image_path)
+
+    # endregion
+
+    # region Settings and Configuration
 
     def set_instrument_reader_settings(self, rs):
         self.instrument_reader_settings = rs
@@ -1382,16 +1383,255 @@ class PIDVisionApp:
         else:
             print('first capture an instrument')
 
-    def swap_services(self):
-        self.service_in, self.service_out = self.service_out, self.service_in
-        self.update_data_display()
+    def set_tag_label_groups(self):
+        group_window = tk.Toplevel(self.root)
+        print(self.tag_label_groups)
+        app = DictionaryBuilder(group_window, self.tag_label_groups, self.detection_labels)
+        self.tag_label_groups = app.run()
+        print(self.tag_label_groups)
+
+    def set_nms_threshold(self):
+        response = tkinter.simpledialog.askfloat(title='Non-Maximum-Supression',
+                                                 prompt='Set NMS overlap threshold (smaller = fewer boxes): ',
+                                                 initialvalue=self.nms_threshold)
+        try:
+            self.nms_threshold = float(response)
+        except Exception as e:
+            tk.messagebox.showinfo('set NMS fail', e)
+
+    def set_object_box_expand(self):
+        response = tkinter.simpledialog.askfloat(title='Set percent box expand',
+                                                 prompt='Enter the % box expand for group inst',
+                                                 initialvalue=self.object_box_expand)
+        try:
+            self.object_box_expand = float(response)
+        except Exception as e:
+            tk.messagebox.showinfo('set box expand fail', e)
+
+    def set_object_scores(self):
+        def set_minscores(score_dict):
+            self.min_scores = score_dict
+
+        slider_window = tk.Toplevel(self.root)
+
+        for label in self.detection_labels:
+            if self.min_scores.get(label):
+                continue
+            else:
+                self.min_scores[label] = self.minscore_inst
+
+        SliderApp(slider_window, self.min_scores, callback=set_minscores)
+
+    def categorize_labels(self):
+        manager = GroupManager(self.detection_labels, self.group_inst, self.group_other)
+        manager.run()
+        self.group_inst = manager.group_capture
+        self.group_other = manager.group_association
+        print(self.group_other)
+
+    def set_comment_box_expand(self):
+        self.minscore_inst = tk.simpledialog.askinteger(prompt="Enter Comment Box Expand",
+                                                        title="Enter Comment Box Expand",
+                                                        initialvalue=self.comment_box_expand)
+
+    def set_association_radius(self):
+        self.association_radius = tk.simpledialog.askfloat(prompt="Enter Object association radius",
+                                                           title="Enter association ( Radius",
+                                                           initialvalue=self.association_radius)
+
+    # endregion
+
+    # region File Operations
+
+    def save_workbook(self):
+        # Save the workbook
+        if self.write_mode == 'openpyxl':
+            self.wb.save(self.workbook_path)
+            print('wb saved')
+        else:
+            print('not in openpyxl write mode. cant save')
 
     def merge_pdfs(self):
         folder_that_has_pdfs = filedialog.askdirectory(title='Folder that has PDFs')
         merge_pdf(folder_that_has_pdfs)
         self.open_folder(folder_that_has_pdfs)
 
-    #def create_ocr_settings_gui(self):
+    def make_pid_page_xlsx(self):
+
+        pid_page_xlsx = openpyxl.Workbook()
+        ws = pid_page_xlsx.create_sheet('pid_page')
+        image_folder = filedialog.askdirectory(title='Folder that has PNGs')
+        if self.pid_coords:
+
+            for filename in os.listdir(image_folder):
+                if filename.endswith(".png") or filename.endswith(".jpg"):
+                    file_path = os.path.join(image_folder, filename)
+                    img = cv2.imread(file_path)
+
+                    self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
+                    cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
+                    self.capture_pid(cropped_image)
+
+                    row = [filename, self.pid if self.pid else ""]
+                    ws.append(row)
+
+        counter = 1
+        while True:
+            try:
+                save_location = os.path.join(image_folder, f"pid_page_{counter}.xlsx")
+                pid_page_xlsx.save(save_location)
+                print(f"File saved as: {save_location}")
+                break
+            except Exception as e:
+                print(f"Error saving file: {e}")
+                counter += 1
+
+    def create_tag_type_xlsx(self):
+        kernel_folder = filedialog.askdirectory(title='Folder that has Kernels')
+        image_folder = filedialog.askdirectory(title='Folder that has PNGs')
+        scale = tk.simpledialog.askinteger("Scale percent", "Enter a scale percent 1-100:", initialvalue=100) / 100
+        expansion_pixels = tk.simpledialog.askinteger("Expand box", "Enter box expansion pixels:", initialvalue=180)
+        confidence = tk.simpledialog.askinteger("Confidence", "Enter convolution confidence threshold:",
+                                                initialvalue=80) / 100
+        rotation = tk.simpledialog.askinteger("Rotation", "Enter rotation directions 1-4:", initialvalue=1)
+
+        CR = ConvolutionReplacer(kernel_folder, scale, rotation)
+
+        tag_type_xlsx = openpyxl.Workbook()
+        ws = tag_type_xlsx.create_sheet('tagtype')
+        # Define the header row
+        header = ['TAG', 'TAG_NO', 'TYPE', 'PAGE', 'PID']
+        # Write the header row to the first sheet of the workbook
+        ws.append(header)
+
+        # for img in image_folder
+        for filename in os.listdir(image_folder):
+            if filename.endswith(".png") or filename.endswith(".jpg"):
+                file_path = os.path.join(image_folder, filename)
+                img = cv2.imread(file_path)
+
+                if self.pid_coords:
+                    self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
+                    cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
+                    self.capture_pid(cropped_image)
+
+                result_boxes_image, final_detections_rescaled = CR.detect(img, threshold=confidence)
+                # final_detections_rescaled = [(top_left, bottom_right, label, rotation, score)...]
+                cv2.imwrite('temp.png', result_boxes_image)
+                # os.startfile('temp.png')
+
+                for detection in final_detections_rescaled:
+                    label = detection[2]
+
+                    top_left, bottom_right = detection[0], detection[1]
+                    # Expand the box by 100px (adjustable parameter)
+
+                    x1, y1 = int(max(0, top_left[0] - expansion_pixels)), int(max(0, top_left[1] - expansion_pixels))
+                    x2, y2 = int(min(img.shape[1], bottom_right[0] + expansion_pixels)), int(
+                        min(img.shape[0], bottom_right[1] + expansion_pixels))
+
+                    # Crop the image
+                    cropped_image = img[y1:y2, x1:x2]
+
+                    self.capture_instruments(cropped_image)
+
+                    for data in self.inst_data:
+                        data['label'] = label
+                        row = [data['tag'], data['tag_no'], data['label'], filename, self.pid if self.pid else ""]
+                        ws.append(row)
+
+                    self.inst_data = []
+
+        counter = 1
+        while True:
+            try:
+                save_location = os.path.join(image_folder, f"tag_type{counter}.xlsx")
+                tag_type_xlsx.save(save_location)
+                print(f"File saved as: {save_location}")
+                break
+            except Exception as e:
+                print(f"Error saving file: {e}")
+                counter += 1
+
+    def generate_instrument_count(self):
+
+        ocr_needed = tk.messagebox.askyesno(title='OCR NEEDED?',
+                                            message='Do we need to do OCR (for comments)?\nNote if avaliable we use existing results')
+        type_needed = tk.messagebox.askyesno(title='TYPE NEEDED?',
+                                             message='Do we need to do instrument types?')
+        overwrite = tk.messagebox.askyesno(title='OVERWRITE?',
+                                           message='Do you want to overwrite Existing counts?')
+
+        sure = tk.messagebox.askyesno(title='SURE?',
+                                      message='ARE U SURE')
+        if not sure:
+            return
+
+        for i in range(len(self.image_list)):
+            self.go_to_page(i)
+            self.one_instrument_count(overwrite=overwrite)
+
+        self.compile_excels()
+
+    def compile_excels(self):
+        # NOW we compile all the xlsxs into one
+        output_file = compile_excels(self.folder_path, self.folder_path, prefix='Instrument_Count', timestamp=True,
+                                     recursive=True)
+        if tk.messagebox.askyesno('Open Results?'):
+            os.startfile(output_file)
+
+    def one_instrument_count(self, overwrite=True):
+
+        save_location = os.path.join(self.results_folder, "Instrument_Count.xlsx")
+        if os.path.exists(save_location) and not overwrite:
+            return
+
+        inst_count_xlsx = openpyxl.Workbook()
+        ws = inst_count_xlsx.active
+        ws.title = 'Instrument Count'
+
+        img = self.cv2img
+
+        labels, boxes, scores = model_predict_on_mosaic(img, self.model_inst, threshold=self.nms_threshold)
+        results = zip(labels, boxes, scores)
+
+        inst_img = draw_detection_boxes(img, labels, boxes, scores)
+        cv2.imwrite(os.path.join(self.results_folder, 'inst_img.png'), inst_img)
+
+        inst_data = return_inst_data(results, img, self.reader, self.instrument_reader_settings,
+                                     inst_labels=self.group_inst, other_labels=self.group_other,
+                                     min_scores=self.min_scores, expand=self.object_box_expand,
+                                     comment_box_expand=self.comment_box_expand,
+                                     ocr_results=self.ocr_results, offset=(0, 0),
+                                     radius=self.association_radius,
+                                     tag_label_groups=self.tag_label_groups)
+
+        print('there are ', len(inst_data), ' inst_data items')
+
+        just_lines_img = remove_objects_from_image(img, inst_data, self.ocr_results)
+        cv2.imwrite(os.path.join(self.results_folder, 'blank.png'), just_lines_img)
+
+        current_row = 1
+        for data in inst_data:
+            data['pid'] = self.pid
+            data['file'] = self.image_path
+            if not ws['A1'].value:  # Check if header doesn't exist
+                print('making header')
+                self.create_excel_header(ws, data)
+                current_row += 1
+
+            self.populate_excel_row(ws, data, current_row)
+            current_row += 1
+        try:
+            inst_count_xlsx.save(save_location)
+            print(f"File saved as: {save_location}")
+        except:
+            print(f"Save to {save_location} failed")
+
+    # endregion
+
+    # region UI Helper Methods
+
     def shift_pressed(self, event):
         self.shift_held = True
 
@@ -1404,323 +1644,58 @@ class PIDVisionApp:
     def ctrl_released(self, event):
         self.ctrl_held = False
 
-    def update_capture_text(self, event):
-        # Update the text's position to follow the cursor
-        #x, y = event.x, event.y
-        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
-        self.canvas.coords(self.capture_text, x-8, y-8)
-
-    def load_correct_fn(self):
-        # Create a module specification
-        self.correct_fn_path = filedialog.askopenfilename(filetypes=[('Python Files', '*.py')])
-        if self.correct_fn_path:
-            try:
-                spec = importlib.util.spec_from_file_location('my_module', self.correct_fn_path)
-
-                # Create a module from the specification
-                module = importlib.util.module_from_spec(spec)
-
-                # Load the module
-                spec.loader.exec_module(module)
-
-                # Access the 'correct' function from the module
-                # correct(tag, tag_no)
-                self.correct_fn = module.correct
-                print('loaded correct fn')
-            except Exception as e:
-                print('faild to load correct fn', e)
-                self.correct_fn = None
-
-    def load_model(self):
-        # Create a module specification
-        self.model_inst_path = filedialog.askopenfilename(filetypes=[('PTH Files', '*.pth')])
-        #labels = ['inst', 'dcs', 'ball', 'globe', 'diaphragm', 'knife', 'vball', 'plug', 'butterfly', 'gate']
-        # self.model_inst_path = r"models\saved_model_vid-v3.18_GEVO.pth"
-        # load instrument recognition model
-        print('loading model')
-        self.model_inst = Model.load(self.model_inst_path, self.labels)
-
-    def load_pretrained_model(self, model_path=None):
-        if model_path == None:
-            model_path = filedialog.askopenfilename(title="Select pretrained model file",filetypes=[("Model files", "*.pth")])
-        if model_path:
-            label_path = model_path.replace(".pth", ".txt")
-            if os.path.exists(label_path):
-                with open(label_path, "r") as f:
-                    self.labels = [x.strip() for x in f.read().split(",")]
-                    print(self.labels)
-            else:
-                tk.messagebox.showinfo("Load error", f"{label_path} with comma separated labels not found")
-            print('make sure labels are loaded correctly')
-            self.model_inst = Model.load(model_path, self.labels)
-            print("Pretrained model loaded successfully.")
-            #tk.messagebox.showinfo("Model Loaded", "Pretrained model loaded successfully.")
-            #self.labels_entry.insert('1.0', ', '.join(self.labels))
-
-    def open_go_to_page(self):
-
-        page_index = tk.simpledialog.askinteger("Go to Page", "Enter the page index:")
-
-        if page_index is not None:
-            self.go_to_page(page_index - 1)  # Adjust the index since it's 0-based
-            self.clear_boxes()
-
-    def open_pdf2png(self):
-        # Ask for DPI value
-        width = tk.simpledialog.askinteger("DPI", "Enter the image width:", initialvalue=5000)
-
-        # Open file dialog to select PDF file
-        root = tk.Tk()
-        root.withdraw()  # Hide the root window
-        pdf_file = filedialog.askopenfilename(title="Select PDF File", filetypes=[("PDF Files", "*.pdf")])
-
-        if pdf_file and width:
-            # Call the pdf2png function with the selected PDF file and DPI value
-            images_folder = pdf2png(pdf_file, width)
-        else:
-            return
-
-        if tk.messagebox.askyesno("Open the project?"):
-            self.open_folder(images_folder)
-
-    def clear_instrument_group(self):
-
-
-        if self.inst_data:
-            for box in self.persistent_boxes[-self.active_inst_box_count:]:
-                self.canvas.delete(box)  # Remove the previous box
-        self.inst_data = []
-        self.update_data_display()
-
-    def set_capture(self, capture_type):
-        self.capture = capture_type
-        self.canvas.itemconfig(self.capture_text, text=self.capture)
-
-    def open_folder(self, given_folder=None):
-
-        self.initialize_models()
-
-        # Define a custom sorting key function
-        def natural_sort_key(s):
-            return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', s)]
-
-        if not given_folder:
-            self.folder_path = filedialog.askdirectory()
-        else:
-            self.folder_path = given_folder
-
-        if self.folder_path:
-            self.workbook_path = os.path.join(self.folder_path, 'index.xlsx')
-
-            self.image_list = [os.path.join(self.folder_path, f) for f in os.listdir(self.folder_path) if f.endswith(('.png', '.jpg', '.jpeg', '.gif'))]
-            # Sort the collected files using the natural sort key function
-            self.image_list.sort(key=natural_sort_key)
-            self.current_image_index = 0
-            self.load_attributes()
-            if self.current_image_index:
-                self.go_to_page(self.current_image_index)
-            else:
-                self.go_to_page(1)
-
-    def save_workbook(self):
-        # Save the workbook
-        if self.write_mode == 'openpyxl':
-            self.wb.save(self.workbook_path)
-            print('wb saved')
-        else:
-            print('not in openpyxl write mode. cant save')
-
-    def set_comment(self):
-        self.comment = tk.simpledialog.askstring("Input", "Please enter a Comment:")
-        self.update_data_display()
-
-    def create_capture_text(self):
-        # Remove the previous capture text if it exists
-        if hasattr(self, 'capture_text') and self.capture_text:
-            self.canvas.delete(self.capture_text)
-
-        # Create the capture text
-        self.capture_text = self.canvas.create_text(0, 0, text=self.capture, font=("Arial", 8), fill="orange")
-
-        # Bind the mouse motion event to update the capture text position
-        self.canvas.bind("<Motion>", self.update_capture_text)
-
-    def go_to_page(self, page_index):
-        if self.image_list:
-            if page_index < 0:
-                self.current_image_index = 0  # Set to the first image
-            elif page_index >= len(self.image_list):
-                self.current_image_index = len(self.image_list) - 1  # Set to the last image
-            else:
-                self.current_image_index = page_index
-
-            self.load_image()
-
-            if self.pid_coords:
-                # Crop the image using the scaled coordinates
-                print(self.pid_coords)
-
-                cropped_image = self.original_image.crop(self.pid_coords)
-
-                cropped_image = pil_to_cv2(cropped_image)
-                #this is weird but we need to set the self.cropped coords so that we dont let the last used coord overwrite pid
-                self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
-                self.capture_pid(cropped_image)
-
-                self.update_data_display()
-
-            self.load_ocr()
-
-    def next_image(self):
-        self.go_to_page(self.current_image_index + 1)
-
-    def previous_image(self):
-        self.go_to_page(self.current_image_index - 1)
-
-    def clear_boxes(self):
-
-
-        for box in self.persistent_boxes:
-            self.canvas.delete(box)  # Remove the previous box
-            #self.canvas.delete(text)
-
-        # not sure if this is necessary as zip clears stuff
-        self.persistent_boxes = []
-        #self.persistent_texts = []
-
-    def capture_pid(self, cropped_image):
-        print('Perform actions for capturing PID')
-        try:
-            # Perform actions for capturing line
-            result = self.reader.readtext(cropped_image, **self.reader_settings)
-            if result:
-                self.pid = ' '.join([box[1] for box in result])
-                self.pid_coords = (self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2)
-            else:
-                self.pid = ''
-                print('no result')
-        except Exception as e:
-            print('error capturing pid \n',e)
-
-    def capture_comment(self, cropped_image):
-        print('Perform actions for capturing a comment')
-        # Perform actions for capturing line
-        result = self.reader.readtext(cropped_image, **self.reader_settings)
-        if result:
-            self.comment =  ' '.join([box[1] for box in result])
-        else:
-            self.comment =''
-
-        #self.current_text = self.canvas.create_text(self.start_x, self.start_y, text=self.comment, fill="blue", font=("Courier", 12))
-
-    def categorize_labels(self):
-        manager = GroupManager(self.labels, self.group_inst, self.group_other)
-        manager.run()
-        self.group_inst = manager.group_capture
-        self.group_other = manager.group_association
-        print(self.group_other)
-
-    def capture_instruments(self, cropped_image):
-        offset = (self.cropped_x1, self.cropped_y1)
-        # Perform actions for capturing instruments
-        # cropped_image = pil_to_cv2(cropped_image)
-        labels, boxes, scores = model_predict_on_mosaic(cropped_image, self.model_inst, threshold=self.nms_threshold)
-        if labels:
-            self.persistent_boxes.append(self.crop_rectangle)
-            print('added ',self.crop_rectangle,' to persistent boxes')
-            self.active_inst_box_count += 1
-            for i, label in enumerate(labels):
-                print(f"{label}: {scores[i]:.2f} | ", end='')
-            # self.persistent_texts.append(self.current_text)
-            print()
-            inst_prediction_data = zip(labels, boxes, scores)
-
-
-            inst_data = return_inst_data(inst_prediction_data, cropped_image, self.reader,
-                                          self.instrument_reader_settings, radius=self.association_radius,
-                                          min_scores=self.min_scores, expand=self.object_box_expand,
-                                          offset=offset, comment_box_expand=self.comment_box_expand, ocr_results=self.ocr_results,
-                                          inst_labels=self.group_inst, other_labels=self.group_other,
-                                         tag_label_groups=self.tag_label_groups)
-
-            for data in inst_data:
-                print(data)
-
-            self.inst_data.extend(inst_data)
-            #print(self.inst_data.get('label'))
-
-    def vote(self):
-        # Create a dictionary to store tag_no counts
-        tag_counts = {}
-
-        # Count the occurrences of each tag_no
-        for data in self.inst_data:
-            tag_no = data['tag_no']
-            tag_counts[tag_no] = tag_counts.get(tag_no, 0) + 1
-
-        # Find the most frequent tag_no
-        most_frequent_tag_no = max(tag_counts, key=tag_counts.get)
-
-        # Assign the most frequent tag_no to each entry
-        for data in self.inst_data:
-            data['tag_no'] = most_frequent_tag_no
-
-        self.update_data_display()
-
-    def process_captured_text(self, cropped_image, target_attribute):
-        """
-        Unified method for processing captured text from images.
-
-        Args:
-            cropped_image: The image to process
-            target_attribute: String name of attribute to update ('line', 'equipment', 'service_in', 'service_out')
-        """
-        # Handle rotation for line captures only
-        if target_attribute == 'line':
-            height, width = cropped_image.shape[:2]
-            if height > width:
-                cropped_image = cv2.rotate(cropped_image, cv2.ROTATE_90_CLOCKWISE)
-
-        # Perform OCR
-        result = self.reader.readtext(cropped_image, **self.reader_settings)
-
-        if not result:
-            setattr(self, target_attribute, '')
-            return
-
-        just_text = ' '.join([box[1] for box in result])
-        current_value = getattr(self, target_attribute, '')  # Default to empty string if attribute doesn't exist
-
-        # Process text based on modifier keys
-        if self.ctrl_held:
-            new_text = merge_common_substrings(current_value, just_text)
-        elif self.shift_held:
-            new_text = f"{current_value} {just_text}".strip()
-        else:
-            new_text = just_text
-
-        # Update the target attribute
-        setattr(self, target_attribute, new_text)
-
-        # Clear other attributes based on the capture type
-        if target_attribute in ('line', 'equipment'):
-            other_attr = 'equipment' if target_attribute == 'line' else 'line'
-            setattr(self, other_attr, None)
-        elif target_attribute in ('service_in', 'service_out'):
-            self.equipment = None
-
-    # Simplified capture methods that all use the unified processor
-    def capture_line(self, cropped_image):
-        self.process_captured_text(cropped_image, 'line')
-
-    def capture_equipment(self, cropped_image):
-        self.process_captured_text(cropped_image, 'equipment')
-
-    def capture_service_in(self, cropped_image):
-        self.process_captured_text(cropped_image, 'service_in')
-
-    def capture_service_out(self, cropped_image):
-        self.process_captured_text(cropped_image, 'service_out')
+    def show_keybindings(self):
+        keybindings = """
+            n/N: Next image
+            b/B: Previous image
+            p/P: Capture PID
+            a/A: Capture Instrument Group
+            f/F: Capture Line
+            e/E: Capture Equipment
+            z/Z: Capture Service In
+            x/X: Capture Service Out
+            w/W: Write Data to Excel
+            c/C: Clear Instrument Group
+            v/V: Vote to normalize tag numbers
+            s/S: Swap Services
+            g/G: Set Comment
+            left shift: add to service with formatting
+            left ctrl: add to service
+            """
+        tk.messagebox.showinfo("Keybindings", keybindings)
+
+    def show_labels(self):
+
+        tk.messagebox.showinfo("object recognition labels", self.detection_labels)
+
+    def open_console(self):
+        self.console_popup.create_console_popup()
+
+    def open_image_path(self):
+        os.startfile(self.image_path)
+
+    def open_page_results(self):
+        os.startfile(self.results_folder)
+
+    def open_detecto_gui(self):
+        detecto_gui_window = tk.Toplevel(self.root)
+        ObjectDetectionApp(detecto_gui_window)
+
+    def open_FAIA(self):
+        faia_window = tk.Toplevel(self.root)
+        FindAnInstrumentApp(faia_window, img_path=self.image_path)
+
+    def open_image_editor(self):
+        image_editor_window = tk.Toplevel(self.root)
+        ImageEditor(image_editor_window, folder=self.folder_path, image="ocr_capture.png")
+
+    def open_ocr_results_viewer(self):
+        ocr_viewer_window = tk.Toplevel(self.root)
+        OCRViewer(ocr_viewer_window, self.folder_path)
+
+    def open_workbook(self):
+        os.startfile(self.workbook_path)
+    # endregion
 
 def set_window_logo(window, png_path, size=(64, 64)):
     """
