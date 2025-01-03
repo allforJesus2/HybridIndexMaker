@@ -1,9 +1,7 @@
 import os
-import random
 from PIL import Image, ImageFilter
 import xml.etree.cElementTree as ET
 import re
-import numpy as np
 import cv2
 import glob
 

@@ -1,11 +1,9 @@
-# with video
 import cv2
 import numpy as np
 import os
 import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
-
 
 def merge_lines(lines, distance_threshold):
     if lines is None:
@@ -45,7 +43,6 @@ def merge_lines(lines, distance_threshold):
             merged_lines.append(lines[i])
 
     return np.array(merged_lines)
-
 
 class HoughLinesApp:
     def __init__(self, window):
@@ -144,6 +141,12 @@ class HoughLinesApp:
         self.threshold_value_slider.set(0)
         self.threshold_value_slider.pack(side=tk.TOP, pady=5)
 
+        # New slider for image scaling
+        self.image_scale_slider = tk.Scale(slider_frame, from_=10, to=200, orient=tk.HORIZONTAL,
+                                           command=self.update_image, label="Image Scale (%)", length=300)
+        self.image_scale_slider.set(100)
+        self.image_scale_slider.pack(side=tk.TOP, pady=5)
+
         # Create a frame for the buttons
         button_frame = tk.Frame(self.control_window)
         button_frame.pack(side=tk.TOP, pady=5)
@@ -151,10 +154,6 @@ class HoughLinesApp:
         # Button to open file dialog
         self.open_button = tk.Button(button_frame, text="Open Image", command=self.open_image)
         self.open_button.pack(side=tk.LEFT, padx=5)
-
-        # Button to generate video
-        # self.generate_video_button = tk.Button(button_frame, text="Generate Video", command=self.generate_video)
-        # self.generate_video_button.pack(side=tk.LEFT, padx=5)
 
         self.save_output_button = tk.Button(button_frame, text="Save Output Image", command=self.save_output_image)
         self.save_output_button.pack(side=tk.LEFT, padx=5)
@@ -165,15 +164,6 @@ class HoughLinesApp:
         self.apply_houghlines_directly_button = tk.Button(button_frame, text="Toggle Direct Mode",
                                                           command=self.toggle_direct_mode)
         self.apply_houghlines_directly_button.pack(side=tk.LEFT, padx=5)
-
-    '''
-    dst: Output of the edge detector. It should be a grayscale image (although in fact it is a binary one)
-    lines: A vector that will store the parameters (r,θ) of the detected lines
-    rho : The resolution of the parameter r in pixels. We use 1 pixel.
-    theta: The resolution of the parameter θ in radians. We use 1 degree (CV_PI/180)
-    threshold: The minimum number of intersections to "*detect*" a line
-    srn and stn: Default parameters to zero. Check OpenCV reference for more info.
-    '''
 
     def on_canvas_resize(self, event):
         if self.photo:
@@ -258,7 +248,11 @@ class HoughLinesApp:
             erosion_size = self.erosion_slider.get()
             vertex_merge_distance = self.vertex_merge_slider.get()
             vertex_merge_iterations = self.vertex_merge_iterations_slider.get()
-            #threshold_value = self.threshold_value_slider.get()
+            image_scale = self.image_scale_slider.get() / 100
+
+            # Resize the image based on the image scale slider
+            if image_scale != 1.0:
+                self.image = cv2.resize(self.image, None, fx=image_scale, fy=image_scale, interpolation=cv2.INTER_AREA)
 
             if self.direct_mode:
                 binary = self.grayscale_threshold_invert(self.image)
@@ -412,7 +406,6 @@ class HoughLinesApp:
                                       int(merged_vertices[i + 1][0]), int(merged_vertices[i + 1][1])]])
 
         return np.array(merged_lines)
-
 
 if __name__ == "__main__":
     root = tk.Tk()

@@ -40,6 +40,10 @@ class CropWindow(tk.Toplevel):
         tk.Button(control_frame, text="Open Original",
                   command=lambda: startfile(self.image_path)).pack(side=tk.RIGHT, padx=5)
 
+        # Add new button to show highlighted region
+        tk.Button(control_frame, text="Show Region in Full Image",
+                  command=self.show_highlighted_region).pack(side=tk.RIGHT, padx=5)
+
         # Image label
         self.image_label = tk.Label(self)
         self.image_label.pack(expand=True, fill='both')
@@ -50,6 +54,44 @@ class CropWindow(tk.Toplevel):
 
         # Update the image
         self.update_crop(initial_width, initial_height)
+
+    def show_highlighted_region(self):
+        """Show the original image with the current crop region highlighted"""
+        try:
+            # Create a copy of the original image
+            img_copy = self.full_image.copy()
+            draw = ImageDraw.Draw(img_copy)
+
+            # Calculate current crop coordinates
+            left = max(0, self.center_x - self.current_width // 2)
+            top = max(0, self.center_y - self.current_height // 2)
+            right = min(self.full_image.width, left + self.current_width)
+            bottom = min(self.full_image.height, top + self.current_height)
+
+            # Draw red rectangle around the current crop region
+            draw.rectangle([left, top, right, bottom], outline='red', width=5)
+
+            # Create a temporary file with a .png extension
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+                temp_path = temp_file.name
+                img_copy.save(temp_path)
+                startfile(temp_path)
+
+            # Schedule the temporary file for deletion after a delay
+            # This gives the system time to open the file before deleting it
+            def delete_temp_file():
+                try:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+                except Exception:
+                    pass
+
+            self.after(1000, delete_temp_file)  # Delete after 1 second
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to show highlighted region: {str(e)}")
 
     def get_step_size(self):
         try:
@@ -88,8 +130,6 @@ class CropWindow(tk.Toplevel):
         photo = ImageTk.PhotoImage(region)
         self.image_label.configure(image=photo)
         self.image_label.image = photo  # Keep a reference!
-
-
 # Modified show_region method for FindAnInstrumentApp class
 
 class FindAnInstrumentApp:

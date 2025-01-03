@@ -1,6 +1,5 @@
 from PIL import Image, ImageTk
 from console_redirect import *
-from convolutioner import ConvolutionReplacer
 from detecto.core import Model
 from detecto_gui import ObjectDetectionApp
 from easyocr_mosaic import *
@@ -16,7 +15,6 @@ from reader_settings import SetReaderSettings
 from tkinter import filedialog, ttk
 from auto_scroll import AutoScrollbar
 import easyocr
-import importlib.util
 import json
 import openpyxl
 import os
@@ -26,7 +24,7 @@ import tkinter as tk
 import tkinter.messagebox
 import tkinter.simpledialog
 import xlwings as xw
-
+from tkinter import ttk, messagebox
 
 class PIDVisionApp:
 
@@ -40,7 +38,7 @@ class PIDVisionApp:
         self.root.withdraw()
         # Create and show splash screen
 
-        self.splash = SplashScreen(root, r"C:\Users\dcaoili\OneDrive - Samuel Engineering\Pictures\logo\logo-big.png")
+        self.splash = SplashScreen(root, r"logo-big.png")
 
         # Start initialization in a separate thread
         init_thread = threading.Thread(target=self.initialize_app)
@@ -63,14 +61,14 @@ class PIDVisionApp:
         # Initialize image attributes
         self.initialize_image_attributes()
 
-        # Initialize instrument and equipment models
-        self.initialize_models()
-
         # Initialize reader settings
         self.initialize_reader_settings()
 
         # Initialize other attributes
         self.initialize_other_attributes()
+
+        # Initialize instrument and equipment models
+        self.initialize_models()
 
         # Bind key shortcuts to the respective commands
         self.bind_key_shortcuts()
@@ -98,99 +96,128 @@ class PIDVisionApp:
         self.root.title("PIDVision.AI")
 
     def create_menu_bar(self):
-        # Create a menu bar
+        # Create the main menu bar
         self.menu_bar = tk.Menu(self.root)
+
+        # File Menu
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.file_menu.add_command(label="Open Project Folder", command=self.open_folder)
+        self.file_menu.add_command(label="Open Project Folder", command=self.open_project_folder)
         self.file_menu.add_command(label="Open Current Image", command=self.open_image_path)
         self.file_menu.add_command(label="Open Index", command=self.open_workbook)
-
-        self.file_menu.add_command(label="Load Object detection model", command=self.load_pretrained_model)
-
+        self.file_menu.add_command(label="Save Workbook", command=self.save_workbook)
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
 
-        # Create App menu
-        self.app_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.app_menu.add_command(label="Image Editor", command=self.open_image_editor)
-        self.app_menu.add_command(label="Find an instrument App", command=self.open_FAIA)
-        self.app_menu.add_command(label="Search OCR Results", command=self.open_ocr_results_viewer)
-        self.app_menu.add_command(label="Train Object Detection Model", command=self.open_detecto_gui)
-        self.app_menu.add_command(label="Open Console Popup", command=self.open_console)
+        # View Menu
+        self.view_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.view_menu.add_command(label="Next Page", command=self.next_image)
+        self.view_menu.add_command(label="Previous Page", command=self.previous_image)
+        self.view_menu.add_command(label="Go to Page...", command=self.open_go_to_page)
+        self.view_menu.add_command(label="Open Console", command=self.open_console)
+        self.view_menu.add_command(label="Open Page Results", command=self.open_page_results)
+        self.view_menu.add_command(label="Select PID", command=self.go_to_pid)
 
-        self.menu_bar.add_cascade(label="Apps", menu=self.app_menu)
+        self.menu_bar.add_cascade(label="View", menu=self.view_menu)
 
-        # Create a commands menu
-        self.command_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.command_menu.add_command(label="Create images from PDF", command=self.open_pdf2png)
-        self.command_menu.add_command(label="Merge pdfs", command=self.merge_pdfs)
-
-        # self.command_menu.add_command(label="Load a Tag Correction Function", command=self.load_correct_fn)
-        self.command_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
-        self.command_menu.add_command(label="Live Write Mode", command=lambda: self.set_write_mode('xlwings'))
-        self.command_menu.add_command(label="Silent/quick Write Mode", command=lambda: self.set_write_mode('openpyxl'))
-        self.command_menu.add_command(label="Save workbook", command=self.save_workbook)
-        # self.command_menu.add_command(label="Auto Generate Index", command=self.auto_generate_index)
-        self.command_menu.add_command(label="Generate type xlsx via convolution", command=self.create_tag_type_xlsx)
-        self.command_menu.add_command(label="Generate All pages Instrument Count",
-                                      command=self.generate_instrument_count)
-        self.command_menu.add_command(label="Generate Single Page Instrument Count", command=self.one_instrument_count)
-        # self.command_menu.add_command(label="Compile Instrument counts", command=self.compile_excels)
-        self.command_menu.add_command(label="Generate Filename PID xlsx", command=self.make_pid_page_xlsx)
-        self.command_menu.add_command(label="Test instrument Model on Image", command=self.test_model_mosaic)
-
-        self.command_menu.add_command(label="Get OCR", command=self.get_ocr)
-        self.command_menu.add_command(label="Get all pages OCR", command=self.get_all_ocr)
-        self.command_menu.add_command(label="Open Page Results folder", command=self.open_page_results)
-        # self.command_menu.add_command(label="Print class vairables", command=self.print_class_vars)
-
-        self.menu_bar.add_cascade(label="Commands", menu=self.command_menu)
-
-        # Create a capture menu
+        # Capture Menu
         self.capture_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.capture_menu.add_command(label="Capture PID", command=lambda: self.set_capture('pid'))
-        self.capture_menu.add_command(label="Capture Instrument Group", command=lambda: self.set_capture('instruments'))
-        self.capture_menu.add_command(label="Capture Line", command=lambda: self.set_capture('line'))
-        self.capture_menu.add_command(label="Capture Equipment", command=lambda: self.set_capture('equipment'))
-        self.capture_menu.add_command(label="Capture Service In", command=lambda: self.set_capture('service_in'))
-        self.capture_menu.add_command(label="Capture Service Out", command=lambda: self.set_capture('service_out'))
-        self.capture_menu.add_command(label="Capture comment", command=lambda: self.set_capture('comment'))
-
-        self.capture_menu.add_command(label="Swap services", command=self.swap_services)
-        self.capture_menu.add_command(label="Clear instrument group", command=self.clear_instrument_group)
-
+        self.capture_menu.add_command(label="PID", command=lambda: self.set_capture('pid'))
+        self.capture_menu.add_command(label="Instrument Group", command=lambda: self.set_capture('instruments'))
+        self.capture_menu.add_command(label="Line", command=lambda: self.set_capture('line'))
+        self.capture_menu.add_command(label="Equipment", command=lambda: self.set_capture('equipment'))
+        self.capture_menu.add_command(label="Service In", command=lambda: self.set_capture('service_in'))
+        self.capture_menu.add_command(label="Service Out", command=lambda: self.set_capture('service_out'))
+        self.capture_menu.add_command(label="Comment", command=lambda: self.set_capture('comment'))
+        self.capture_menu.add_separator()
+        self.capture_menu.add_command(label="Clear Instrument Group", command=self.clear_instrument_group)
+        self.capture_menu.add_command(label="Swap Services", command=self.swap_services)
+        self.capture_menu.add_command(label="Vote on Tag Numbers", command=self.vote)
         self.menu_bar.add_cascade(label="Capture", menu=self.capture_menu)
 
-        # Create page menu
-        self.page_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.page_menu.add_command(label="Next", command=self.next_image)
-        self.page_menu.add_command(label="Previous", command=self.previous_image)
-        self.page_menu.add_command(label="Go to Page", command=self.open_go_to_page)
-        self.menu_bar.add_cascade(label="Page", menu=self.page_menu)
+        # Data Menu
+        self.data_menu = tk.Menu(self.menu_bar, tearoff=0)
 
-        # settings menu
+        # Write Mode submenu
+        self.write_mode_menu = tk.Menu(self.data_menu, tearoff=0)
+        self.write_mode_menu.add_command(label="Live Write (xlwings)", command=lambda: self.set_write_mode('xlwings'))
+        self.write_mode_menu.add_command(label="Quick Write (openpyxl)",
+                                         command=lambda: self.set_write_mode('openpyxl'))
+        self.data_menu.add_cascade(label="Write Mode", menu=self.write_mode_menu)
+
+        self.data_menu.add_command(label="Append Data to Index", command=self.append_data_to_excel)
+
+        # Generate Reports submenu
+        self.reports_menu = tk.Menu(self.data_menu, tearoff=0)
+        self.reports_menu.add_command(label="Instrument Count (All Pages)", command=self.generate_instrument_count)
+        self.reports_menu.add_command(label="Instrument Count (Single Page)", command=self.one_instrument_count)
+        self.reports_menu.add_command(label="Filename PID List", command=self.make_pid_page_xlsx)
+        self.reports_menu.add_command(label="Get OCR Results", command=self.get_ocr)
+        self.data_menu.add_cascade(label="Generate Reports", menu=self.reports_menu)
+
+        self.menu_bar.add_cascade(label="Data", menu=self.data_menu)
+
+        # Tools Menu
+        self.tools_menu = tk.Menu(self.menu_bar, tearoff=0)
+
+        # Applications submenu
+        self.apps_menu = tk.Menu(self.tools_menu, tearoff=0)
+        self.apps_menu.add_command(label="Image Editor", command=self.open_image_editor)
+        self.apps_menu.add_command(label="Find Instrument", command=self.open_FAIA)
+        self.apps_menu.add_command(label="OCR Results Viewer", command=self.open_ocr_results_viewer)
+        self.apps_menu.add_command(label="Train Detection Model", command=self.open_detecto_gui)
+        self.tools_menu.add_cascade(label="Applications", menu=self.apps_menu)
+
+        # PDF Tools submenu
+        self.pdf_menu = tk.Menu(self.tools_menu, tearoff=0)
+        self.pdf_menu.add_command(label="Create Images from PDF", command=self.create_images_from_pdf)
+        self.pdf_menu.add_command(label="Merge PDFs", command=self.merge_pdfs)
+        self.tools_menu.add_cascade(label="PDF Tools", menu=self.pdf_menu)
+
+        # Model Management submenu
+        self.model_menu = tk.Menu(self.tools_menu, tearoff=0)
+        self.model_menu.add_command(label="Load Object Detection Model", command=self.load_pretrained_model)
+        self.model_menu.add_command(label="Run Model Test", command=self.test_model_mosaic)
+
+        self.tools_menu.add_cascade(label="Model Management", menu=self.model_menu)
+
+        self.menu_bar.add_cascade(label="Tools", menu=self.tools_menu)
+
+        # Settings Menu
         self.settings_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.settings_menu.add_command(label="Instrument Reader Settings",
-                                       command=self.open_instrument_reader_settings)
-        self.settings_menu.add_command(label="General Reader Settings", command=self.open_general_reader_settings)
-        self.settings_menu.add_command(label="instrument comment box expand", command=self.set_comment_box_expand)
-        self.settings_menu.add_command(label="Tag Prefix Groups", command=self.set_tag_label_groups)
-        self.settings_menu.add_command(label="Instrument Groups", command=self.categorize_labels)
-        self.settings_menu.add_command(label="Group Association radius", command=self.set_association_radius)
-        self.settings_menu.add_command(label="Object Min Scores", command=self.set_object_scores)
-        self.settings_menu.add_command(label="object box expand %", command=self.set_object_box_expand)
-        self.settings_menu.add_command(label="NMS threshold", command=self.set_nms_threshold)
-        self.settings_menu.add_command(label="Save Settings", command=self.save_attributes)
 
+        # Reader Settings submenu
+        self.reader_settings_menu = tk.Menu(self.settings_menu, tearoff=0)
+        self.reader_settings_menu.add_command(label="Instrument Reader", command=self.open_instrument_reader_settings)
+        self.reader_settings_menu.add_command(label="General Reader", command=self.open_general_reader_settings)
+        self.settings_menu.add_cascade(label="Reader Settings", menu=self.reader_settings_menu)
+
+        # Detection Settings submenu
+        self.detection_settings_menu = tk.Menu(self.settings_menu, tearoff=0)
+        self.detection_settings_menu.add_command(label="Object Min Scores", command=self.set_object_scores)
+        self.detection_settings_menu.add_command(label="NMS Threshold", command=self.set_nms_threshold)
+        self.detection_settings_menu.add_command(label="Object Box Expand", command=self.set_object_box_expand)
+        self.settings_menu.add_cascade(label="Detection Settings", menu=self.detection_settings_menu)
+
+        # Group Settings submenu
+        self.group_settings_menu = tk.Menu(self.settings_menu, tearoff=0)
+        self.group_settings_menu.add_command(label="Tag Prefix Groups", command=self.set_tag_label_groups)
+        self.group_settings_menu.add_command(label="Instrument Groups", command=self.categorize_labels)
+        self.group_settings_menu.add_command(label="Group Association Radius", command=self.set_association_radius)
+        self.settings_menu.add_cascade(label="Group Settings", menu=self.group_settings_menu)
+
+        self.settings_menu.add_command(label="Comment Box Settings", command=self.set_comment_box_expand)
+        self.settings_menu.add_separator()
+        self.settings_menu.add_command(label="Save Settings", command=self.save_attributes)
         self.menu_bar.add_cascade(label="Settings", menu=self.settings_menu)
 
-        # Create a Help menu
+        # Help Menu
         self.help_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.help_menu.add_command(label="Keybindings", command=self.show_keybindings)
-        self.help_menu.add_command(label="Object detection lables", command=self.show_labels)
+        self.help_menu.add_command(label="Object Detection Labels", command=self.show_labels)
         self.menu_bar.add_cascade(label="Help", menu=self.help_menu)
 
+        # Configure the root window to use the menu bar
         self.root.config(menu=self.menu_bar)
-
+        
     def create_canvas_and_scrollbars(self):
         # Vertical and horizontal scrollbars for canvas
         vbar = AutoScrollbar(self.root, orient='vertical')
@@ -216,7 +243,7 @@ class PIDVisionApp:
     def initialize_image_attributes(self):
         # Initialize image attributes
         self.image_list = []
-        self.image_path = None
+        self.image_path = ''
         self.current_image_index = 0
         self.original_image = None
         self.imscale = 1.0  # scale for the canvas image
@@ -224,10 +251,6 @@ class PIDVisionApp:
         self.cv2img = None
 
     def initialize_models(self):
-        # Initialize instrument and equipment models
-        self.model_inst_path = "models/vortex_large.pth"
-        # self.model_equipment_path = "models/equipment_services_v2.pth"
-
         print('loading models from ', self.model_inst_path)
         try:
             # load instrument recognition model
@@ -280,6 +303,7 @@ class PIDVisionApp:
 
     def initialize_other_attributes(self):
         # Initialize other attributes
+        self.model_inst_path = "models/vortex_large.pth"
         self.ocr_results = None
         self.comment_box_expand = 20
         self.line = None
@@ -322,8 +346,8 @@ class PIDVisionApp:
         self.object_box_expand = 0.0
         self.group_other = []
         self.min_scores = {}
-        self.association_radius = 33
-        self.minscore_inst = 0.74
+        self.association_radius = 180
+        self.default_min_detection_score = 0.74
         self.nms_threshold = 0.5
         self.inst_data = []
         self.active_inst_box_count = 0
@@ -394,7 +418,7 @@ class PIDVisionApp:
             'instrument_reader_settings',
             'reader_settings',
             'model_inst_path',
-            'labels',
+            'detection_labels',
             'group_inst',
             'group_other',
             'comment_box_expand',
@@ -541,6 +565,51 @@ class PIDVisionApp:
 
             self.load_ocr()
 
+    def go_to_pid(self):
+        if not os.path.exists(os.path.join(self.folder_path, "pid_page_1.xlsx")):
+            messagebox.showerror("Error", "pid_page_1.xlsx not found in folder")
+            return
+
+        workbook = openpyxl.load_workbook(os.path.join(self.folder_path, "pid_page_1.xlsx"), read_only=True)
+        worksheet = workbook.active
+
+        # Create mapping of PID to page index
+        pid_to_page = {}
+        for row in worksheet.rows:
+            if row[0].value and row[1].value:  # Check if both filename and PID exist
+                filename = row[0].value
+                pid = row[1].value
+                # Extract page number from filename (e.g., 'page_1.png' -> 1)
+                try:
+                    page_num = int(re.search(r'page_(\d+)', filename).group(1)) - 1  # Convert to 0-based index
+                    pid_to_page[pid] = page_num
+                except (AttributeError, ValueError):
+                    continue
+
+        if not pid_to_page:
+            messagebox.showerror("Error", "No valid PID mappings found")
+            return
+
+        # Create dialog for PID selection
+        dialog = tk.Toplevel()
+        dialog.title("Select PID")
+
+        # Create combobox with PIDs
+        selected_pid = tk.StringVar()
+        combo = ttk.Combobox(dialog, textvariable=selected_pid)
+        combo['values'] = list(pid_to_page.keys())
+        combo.pack(padx=20, pady=20)
+
+        def on_ok():
+            if selected_pid.get() in pid_to_page:
+                self.go_to_page(pid_to_page[selected_pid.get()])
+            dialog.destroy()
+
+        tk.Button(dialog, text="OK", command=on_ok).pack(pady=10)
+        dialog.transient(self.root)  # Make dialog modal
+        dialog.grab_set()
+        dialog.wait_window()
+
     def next_image(self):
         self.go_to_page(self.current_image_index + 1)
 
@@ -555,7 +624,7 @@ class PIDVisionApp:
             self.go_to_page(page_index - 1)  # Adjust the index since it's 0-based
             self.clear_boxes()
 
-    def open_folder(self, given_folder=None):
+    def open_project_folder(self, given_folder=None):
 
         self.initialize_models()
 
@@ -582,7 +651,7 @@ class PIDVisionApp:
             else:
                 self.go_to_page(1)
 
-    def open_pdf2png(self):
+    def create_images_from_pdf(self):
         # Ask for DPI value
         width = tk.simpledialog.askinteger("DPI", "Enter the image width:", initialvalue=5000)
 
@@ -598,7 +667,7 @@ class PIDVisionApp:
             return
 
         if tk.messagebox.askyesno("Open the project?"):
-            self.open_folder(images_folder)
+            self.open_project_folder(images_folder)
 
     # endregion
 
@@ -1311,6 +1380,17 @@ class PIDVisionApp:
             print("Pretrained model loaded successfully.")
 
     def set_write_mode(self, mode):
+        if hasattr(self, 'wb') and self.wb is not None:
+            try:
+                if self.write_mode == 'xlwings':
+                    self.wb.close()
+                elif self.write_mode == 'openpyxl':
+                    self.wb.close()
+                self.wb = None
+                self.ws = None
+            except Exception as e:
+                print(f"Error closing workbook: {e}")
+
         self.write_mode = mode
 
     def test_model_mosaic(self):
@@ -1418,21 +1498,22 @@ class PIDVisionApp:
             if self.min_scores.get(label):
                 continue
             else:
-                self.min_scores[label] = self.minscore_inst
+                self.min_scores[label] = self.default_min_detection_score
 
         SliderApp(slider_window, self.min_scores, callback=set_minscores)
 
     def categorize_labels(self):
-        manager = GroupManager(self.detection_labels, self.group_inst, self.group_other)
+        def set_group_callback(x, y):
+            self.group_inst, self.group_other = x, y
+
+        manager = GroupManager(self.detection_labels, self.group_inst, self.group_other, callback=set_group_callback)
         manager.run()
-        self.group_inst = manager.group_capture
-        self.group_other = manager.group_association
         print(self.group_other)
 
     def set_comment_box_expand(self):
-        self.minscore_inst = tk.simpledialog.askinteger(prompt="Enter Comment Box Expand",
-                                                        title="Enter Comment Box Expand",
-                                                        initialvalue=self.comment_box_expand)
+        self.comment_box_expand = tk.simpledialog.askinteger(prompt="Enter Comment Box Expand",
+                                                                      title="Enter Comment Box Expand",
+                                                                      initialvalue=self.comment_box_expand)
 
     def set_association_radius(self):
         self.association_radius = tk.simpledialog.askfloat(prompt="Enter Object association radius",
@@ -1454,7 +1535,7 @@ class PIDVisionApp:
     def merge_pdfs(self):
         folder_that_has_pdfs = filedialog.askdirectory(title='Folder that has PDFs')
         merge_pdf(folder_that_has_pdfs)
-        self.open_folder(folder_that_has_pdfs)
+        self.open_project_folder(folder_that_has_pdfs)
 
     def make_pid_page_xlsx(self):
 
@@ -1480,73 +1561,6 @@ class PIDVisionApp:
             try:
                 save_location = os.path.join(image_folder, f"pid_page_{counter}.xlsx")
                 pid_page_xlsx.save(save_location)
-                print(f"File saved as: {save_location}")
-                break
-            except Exception as e:
-                print(f"Error saving file: {e}")
-                counter += 1
-
-    def create_tag_type_xlsx(self):
-        kernel_folder = filedialog.askdirectory(title='Folder that has Kernels')
-        image_folder = filedialog.askdirectory(title='Folder that has PNGs')
-        scale = tk.simpledialog.askinteger("Scale percent", "Enter a scale percent 1-100:", initialvalue=100) / 100
-        expansion_pixels = tk.simpledialog.askinteger("Expand box", "Enter box expansion pixels:", initialvalue=180)
-        confidence = tk.simpledialog.askinteger("Confidence", "Enter convolution confidence threshold:",
-                                                initialvalue=80) / 100
-        rotation = tk.simpledialog.askinteger("Rotation", "Enter rotation directions 1-4:", initialvalue=1)
-
-        CR = ConvolutionReplacer(kernel_folder, scale, rotation)
-
-        tag_type_xlsx = openpyxl.Workbook()
-        ws = tag_type_xlsx.create_sheet('tagtype')
-        # Define the header row
-        header = ['TAG', 'TAG_NO', 'TYPE', 'PAGE', 'PID']
-        # Write the header row to the first sheet of the workbook
-        ws.append(header)
-
-        # for img in image_folder
-        for filename in os.listdir(image_folder):
-            if filename.endswith(".png") or filename.endswith(".jpg"):
-                file_path = os.path.join(image_folder, filename)
-                img = cv2.imread(file_path)
-
-                if self.pid_coords:
-                    self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = self.pid_coords
-                    cropped_image = img[self.cropped_y1:self.cropped_y2, self.cropped_x1:self.cropped_x2]
-                    self.capture_pid(cropped_image)
-
-                result_boxes_image, final_detections_rescaled = CR.detect(img, threshold=confidence)
-                # final_detections_rescaled = [(top_left, bottom_right, label, rotation, score)...]
-                cv2.imwrite('temp.png', result_boxes_image)
-                # os.startfile('temp.png')
-
-                for detection in final_detections_rescaled:
-                    label = detection[2]
-
-                    top_left, bottom_right = detection[0], detection[1]
-                    # Expand the box by 100px (adjustable parameter)
-
-                    x1, y1 = int(max(0, top_left[0] - expansion_pixels)), int(max(0, top_left[1] - expansion_pixels))
-                    x2, y2 = int(min(img.shape[1], bottom_right[0] + expansion_pixels)), int(
-                        min(img.shape[0], bottom_right[1] + expansion_pixels))
-
-                    # Crop the image
-                    cropped_image = img[y1:y2, x1:x2]
-
-                    self.capture_instruments(cropped_image)
-
-                    for data in self.inst_data:
-                        data['label'] = label
-                        row = [data['tag'], data['tag_no'], data['label'], filename, self.pid if self.pid else ""]
-                        ws.append(row)
-
-                    self.inst_data = []
-
-        counter = 1
-        while True:
-            try:
-                save_location = os.path.join(image_folder, f"tag_type{counter}.xlsx")
-                tag_type_xlsx.save(save_location)
                 print(f"File saved as: {save_location}")
                 break
             except Exception as e:
@@ -1683,6 +1697,7 @@ class PIDVisionApp:
 
     def open_FAIA(self):
         faia_window = tk.Toplevel(self.root)
+
         FindAnInstrumentApp(faia_window, img_path=self.image_path)
 
     def open_image_editor(self):
@@ -1792,7 +1807,7 @@ class SplashScreen:
 if __name__ == "__main__":
     root = tk.Tk()
 
-    png_path = r"C:\Users\dcaoili\OneDrive - Samuel Engineering\Pictures\logo\LOGO.png"
+    png_path = r"LOGO.png"
     set_window_logo(root, png_path)
 
     app = PIDVisionApp(root)

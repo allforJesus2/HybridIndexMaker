@@ -1,6 +1,3 @@
-import numpy as np
-
-
 def group_lines(lines, max_distance=10):
     """
     Groups lines whose endpoints are within max_distance of each other.
@@ -88,13 +85,14 @@ def white_out_line_groups(img, line_groups, line_thickness=5):
     return result
 
 
-def box_intersects_line(box, line_group):
+def box_intersects_line(box, line_group, scale=1.0):
     """
     Checks if any line in the line group intersects with the given box.
 
     Args:
         box: Tuple of (x1, y1, x2, y2) representing the box corners
         line_group: List of lines where each line is [x1, y1, x2, y2]
+        scale: Float value to scale the box (1.0 means original size, 2.0 means double size)
 
     Returns:
         Boolean indicating whether any line intersects with the box
@@ -104,6 +102,24 @@ def box_intersects_line(box, line_group):
     # Ensure box coordinates are in correct order (top-left, bottom-right)
     box_x1, box_x2 = min(box_x1, box_x2), max(box_x1, box_x2)
     box_y1, box_y2 = min(box_y1, box_y2), max(box_y1, box_y2)
+
+    # Calculate box center
+    center_x = (box_x1 + box_x2) / 2
+    center_y = (box_y1 + box_y2) / 2
+
+    # Calculate box dimensions
+    width = box_x2 - box_x1
+    height = box_y2 - box_y1
+
+    # Calculate scaled dimensions
+    scaled_width = width * scale
+    scaled_height = height * scale
+
+    # Calculate new box coordinates maintaining the center point
+    box_x1 = center_x - (scaled_width / 2)
+    box_x2 = center_x + (scaled_width / 2)
+    box_y1 = center_y - (scaled_height / 2)
+    box_y2 = center_y + (scaled_height / 2)
 
     def ccw(A, B, C):
         """Returns true if points are arranged counter-clockwise"""
