@@ -946,17 +946,9 @@ def return_inst_data(prediction_data, img,
     if not group_inst:
         return
 
-
-    # Filter global OCR results if available
-    filtered_global_ocr = None
-    if global_ocr_results:
-        print('filtering global ocr results')
-        filtered_global_ocr = filter_ocr_results(global_ocr_results, pred_boxes, overlap_threshold=filter_ocr_threshold)
-        print('filtered global ocr results:\n', filtered_global_ocr)
-
     # Get local OCR if needed
     local_ocr_results = None
-    if not filtered_global_ocr and capture_ocr:
+    if capture_ocr:
         print('getting local ocr')
         local_ocr_results = HardOCR(img, reader, reader_settings, sub_img_size=reader_sub_img_size,
                                     stride=reader_stride)
@@ -965,8 +957,8 @@ def return_inst_data(prediction_data, img,
         print('filtered local ocr results:\n', local_ocr_results)
 
     line_data = ''
-    if (local_ocr_results or filtered_global_ocr) and re_line:
-        ocr_to_use = filtered_global_ocr if filtered_global_ocr else local_ocr_results
+    if local_ocr_results and re_line:
+        ocr_to_use = local_ocr_results
         line_data = process_line_data(img, ocr_to_use, re_line, simple=simple_line_mode,
                                       hough_params=hough_params, canny_params=canny_params,
                                       extension_params=extension_params,
@@ -981,7 +973,7 @@ def return_inst_data(prediction_data, img,
                                       remove_significant_lines_only=remove_significant_lines_only,
                                       detecto_boxes=detecto_boxes,
                                       )
-
+    print(line_data)
     for label, box, score, visual_elements in group_inst:
         if simple_line_mode:  # if simple mode
             lines = line_data
@@ -1030,9 +1022,7 @@ def return_inst_data(prediction_data, img,
         else:
             offset_box = box
 
-        if filtered_global_ocr:
-            comment = get_comment(filtered_global_ocr, offset_box, comment_box_expand)
-        elif local_ocr_results:
+        if local_ocr_results:
             print('getting local ocr comment')
             # Use original box for local OCR since it's in local coordinates
             comment = get_comment(local_ocr_results, box, comment_box_expand)

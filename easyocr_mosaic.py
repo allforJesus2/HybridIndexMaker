@@ -2,85 +2,6 @@ import cv2
 import time
 from collections import defaultdict
 
-def join_strings(str1, str2):
-    # Find the length of the shorter string
-    min_length = min(len(str1), len(str2))
-
-    # Start with the full length of the shorter string
-    overlap = min_length
-
-    # Find the largest overlap
-    while overlap > 0:
-        if str1[-overlap:] == str2[:overlap]:
-            return str1 + str2[overlap:]
-        overlap -= 1
-
-    # If no overlap is found, simply concatenate the strings
-    return str1 + str2
-def stitch_words(ocr_results):
-    # Sort results by y-coordinate (top to bottom)
-    sorted_results = sorted(ocr_results, key=lambda x: x[0][0][1])
-
-    # Group results by approximate y-coordinate (same line)
-    line_threshold = 10  # Adjust based on your image resolution
-    lines = defaultdict(list)
-    for result in sorted_results:
-        y_coord = result[0][0][1]
-        line_key = y_coord // line_threshold
-        lines[line_key].append(result)
-
-    stitched_results = []
-    for line in lines.values():
-        # Sort words in the line by x-coordinate (left to right)
-        line.sort(key=lambda x: x[0][0][0])
-
-        # Stitch words in the line
-        stitched_line = []
-        for i, word in enumerate(line):
-            if i == 0:
-                stitched_line.append(word)
-                continue
-
-            prev_word = stitched_line[-1]
-            if should_stitch(prev_word, word):
-                stitched_word = stitch_two_words(prev_word, word)
-                stitched_line[-1] = stitched_word
-            else:
-                stitched_line.append(word)
-
-        stitched_results.extend(stitched_line)
-
-    return stitched_results
-
-def should_stitch(word1, word2):
-    # Check if the words are close enough horizontally
-    x1_max = max(coord[0] for coord in word1[0])
-    x2_min = min(coord[0] for coord in word2[0])
-    distance = x2_min - x1_max
-
-    # Adjust this threshold based on your image resolution and font size
-    distance_threshold = 20
-
-    return distance <= distance_threshold
-
-def stitch_two_words(word1, word2):
-    # Combine the bounding boxes
-    new_box = [
-        word1[0][0],  # Top-left
-        word2[0][1],  # Top-right
-        word2[0][2],  # Bottom-right
-        word1[0][3],  # Bottom-left
-    ]
-
-    # Combine the text
-    new_text = join_strings(word1[1], word2[1])
-
-    # Combine the confidence scores (you may want to adjust this logic)
-    new_confidence = (word1[2] + word2[2]) / 2
-
-    return (new_box, new_text, new_confidence)
-
-# Modify the main HardOCR function to use the new stitching algorithm
 def HardOCR(image, reader, reader_settings,
             sub_img_size=1300, stride=1250):
     rs = reader_settings
@@ -91,12 +12,12 @@ def HardOCR(image, reader, reader_settings,
     print(f'OCR time elapsed: {current_time2 - current_time1}')
 
     current_time1 = time.time()
-    stitched_results = stitch_words(ocr_results)
+    stitched_results = revaluate_overlapping_regions(ocr_results, reader, image, reader_settings)
     current_time2 = time.time()
     print(f'Stitching time elapsed: {current_time2 - current_time1}')
 
     current_time1 = time.time()
-    final_results = correct_for_rotated_text2(image, stitched_results, reader, rs)
+    final_results = correct_for_rotated_text(image, stitched_results, reader, rs)
     current_time2 = time.time()
     print(f'Rotation correction time elapsed: {current_time2 - current_time1}')
 
@@ -109,6 +30,7 @@ def adjust_box_coordinates_with_offset(box, offset):
         (box[2][0] + offset[0], box[2][1] + offset[1]),
         (box[3][0] + offset[0], box[3][1] + offset[1])
     ]
+
 def split_image(img, sub_img_size, stride):
     # Get the size of the input image
     h, w = img.shape[:2]
@@ -130,6 +52,7 @@ def split_image(img, sub_img_size, stride):
             offsets.append((x, y))
 
     return sub_images, offsets
+
 def perform_ocr_on_subimages(img, reader, rs,
                              sub_img_size=1300, stride=1250):
     # Load the image using OpenCV
@@ -155,7 +78,7 @@ def perform_ocr_on_subimages(img, reader, rs,
         ocr_results.extend(adjusted_results)
 
     return ocr_results
-def correct_for_rotated_text2(img, results, reader, rs):
+def correct_for_rotated_text(img, results, reader, rs):
     # img = cv2.imread(img)
     corrected_results = []
     for result in results:
@@ -183,3 +106,142 @@ def correct_for_rotated_text2(img, results, reader, rs):
     return corrected_results
 
 
+def calculate_iou(box1, box2):
+    """Calculate Intersection over Union between two boxes."""
+
+    # Convert boxes to x1,y1,x2,y2 format
+    def get_bounds(box):
+        xs = [p[0] for p in box]
+        ys = [p[1] for p in box]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    box1_x1, box1_y1, box1_x2, box1_y2 = get_bounds(box1)
+    box2_x1, box2_y1, box2_x2, box2_y2 = get_bounds(box2)
+
+    # Calculate intersection
+    inter_x1 = max(box1_x1, box2_x1)
+    inter_y1 = max(box1_y1, box2_y1)
+    inter_x2 = min(box1_x2, box2_x2)
+    inter_y2 = min(box1_y2, box2_y2)
+
+    if inter_x1 >= inter_x2 or inter_y1 >= inter_y2:
+        return 0.0
+
+    inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+
+    # Calculate union
+    box1_area = (box1_x2 - box1_x1) * (box1_y2 - box1_y1)
+    box2_area = (box2_x2 - box2_x1) * (box2_y2 - box2_y1)
+    union_area = box1_area + box2_area - inter_area
+
+    return inter_area / union_area if union_area > 0 else 0
+
+
+def get_combined_box(box1, box2):
+    """Get a bounding box that contains both input boxes."""
+    xs = [p[0] for p in box1 + box2]
+    ys = [p[1] for p in box1 + box2]
+    x1, y1 = min(xs), min(ys)
+    x2, y2 = max(xs), max(ys)
+    return [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+
+
+def revaluate_overlapping_regions(results, reader, img, rs, min_overlap_threshold=0.01, max_overlap_threshold=0.98):
+    """
+    Revaluate overlapping regions in OCR results.
+
+    Args:
+        results: List of OCR results, each containing [box, text, confidence]
+        reader: EasyOCR reader instance
+        img: Original image
+        rs: Reader settings
+        min_overlap_threshold: Minimum IoU to consider boxes as overlapping
+        max_overlap_threshold: Threshold above which to keep only highest confidence
+
+    Returns:
+        List of processed OCR results with overlaps handled
+    """
+    if not results:
+        return []
+
+    # Create groups of overlapping boxes
+    groups = []
+    used_indices = set()
+
+    for i in range(len(results)):
+        if i in used_indices:
+            continue
+
+        current_group = [i]
+        box1 = results[i][0]
+
+        for j in range(i + 1, len(results)):
+            if j in used_indices:
+                continue
+
+            box2 = results[j][0]
+            iou = calculate_iou(box1, box2)
+
+            if iou > min_overlap_threshold:
+                current_group.append(j)
+                used_indices.add(j)
+
+        if len(current_group) > 1:  # Only add groups with overlaps
+            groups.append(current_group)
+            used_indices.add(i)
+
+    # Process each group
+    final_results = []
+    processed_indices = set()
+
+    # First, add all non-overlapping results
+    for i in range(len(results)):
+        if i not in used_indices:
+            final_results.append(results[i])
+
+    # Process overlapping groups
+    for group in groups:
+        group_results = [results[i] for i in group]
+
+        # Check if any pair has high overlap
+        high_overlap = False
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                iou = calculate_iou(group_results[i][0], group_results[j][0])
+                if iou > max_overlap_threshold:
+                    high_overlap = True
+                    break
+            if high_overlap:
+                break
+
+        if high_overlap:
+            # Keep result with highest confidence
+            best_result = max(group_results, key=lambda x: x[2])
+            final_results.append(best_result)
+        else:
+            # Get combined box for all results in group
+            combined_box = group_results[0][0]
+            for result in group_results[1:]:
+                combined_box = get_combined_box(combined_box, result[0])
+
+            # Extract region from image
+            x1 = int(min(p[0] for p in combined_box))
+            y1 = int(min(p[1] for p in combined_box))
+            x2 = int(max(p[0] for p in combined_box))
+            y2 = int(max(p[1] for p in combined_box))
+
+            region = img[y1:y2, x1:x2]
+
+            # Perform OCR on combined region
+            new_results = reader.readtext(region, **rs)
+
+            # Adjust coordinates
+            for result in new_results:
+                box = result[0]
+                adjusted_box = adjust_box_coordinates_with_offset(box, (x1, y1))
+                print('new result: ', result)
+                result = list(result)
+                result[0] = adjusted_box
+                final_results.append(result)
+
+    return final_results

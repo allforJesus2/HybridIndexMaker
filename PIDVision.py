@@ -5,7 +5,6 @@ print(f"PyTorch version: {torch.__version__}")
 print(f"CUDA available: {torch.cuda.is_available()}")
 if torch.cuda.is_available():
     print(f"CUDA device: {torch.cuda.get_device_name(0)}")
-from PIL import Image, ImageTk
 from console_redirect import *
 from detecto.core import Model
 from detecto_gui.detecto_gui import ObjectDetectionApp
@@ -317,7 +316,7 @@ class PIDVisionApp:
             "min_size": 10,
             "ycenter_ths": 0.5,
             "height_ths": 0.5,
-            "width_ths": 2.4,
+            "width_ths": 0.0,
             "add_margin": 0.1,
             "link_threshold": 0.13,
             "text_threshold": 0.3,
@@ -488,7 +487,7 @@ class PIDVisionApp:
             'pred_square_size',
             'canny_params',
             'hough_params',
-            'extension_params'
+            'extension_params',
             'line_box_scale',
             'line_img_erosion',
             'line_img_scale',
@@ -1798,11 +1797,14 @@ class PIDVisionApp:
         img_ocr_results = plot_ocr_results(self.cv2img, self.ocr_results)
         print(self.ocr_results)
         # save a pic
-        cv2.imwrite(os.path.join(self.results_folder, 'ocr_img.png'), img_ocr_results)
+        img_save_path = os.path.join(self.results_folder, 'ocr_img.png')
+        cv2.imwrite(img_save_path, img_ocr_results)
 
         # save actual results
         save_path = os.path.join(self.results_folder, 'ocr.pkl')
         save_easyocr_results_pickle(self.ocr_results, filename=save_path)
+
+        os.startfile(img_save_path)
 
     def get_all_ocr(self):
         self.current_image_index = 0
