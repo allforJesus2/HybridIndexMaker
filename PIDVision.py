@@ -340,7 +340,6 @@ class PIDVisionApp:
         self.service_in = None
         self.service_out = None
         self.equipment = None
-        self.inst_data = None
         self.pid = None
         self.pid_coords = None
         self.comment = None
@@ -1011,23 +1010,21 @@ class PIDVisionApp:
 
         # Create LineProcessingParams instance
         line_params = LineProcessingParams(
-            simple_mode=self.simple_line_mode,
+            re_line=self.re_line,  # Added this
+            simple=self.simple_line_mode,  # Changed from simple_mode to simple
             debug_line=self.debug_line,
             remove_significant_lines_only=self.remove_significant_lines_only,
             paint_line_thickness=self.paint_line_thickness,
             line_join_threshold=self.line_join_threshold,
             line_box_scale=self.line_box_scale,
-            erosion_kernel=self.line_img_erosion,
+            erosion_kernel=self.line_img_erosion,  # Changed from line_img_erosion to erosion_kernel
             erosion_iterations=self.line_erosion_iterations,
             binary_threshold=self.line_img_binary_threshold,
             line_img_scale=self.line_img_scale,
+            hough_params = self.hough_params,
+            canny_params = self.canny_params,
+            extension_params = self.extension_params,
         )
-
-        # Update optional parameter groups if not in simple mode
-        if not self.simple_line_mode:
-            line_params.hough_params = self.hough_params
-            line_params.canny_params = self.canny_params
-            line_params.extension_params = self.extension_params
 
         # Process instrument data
         inst_data = return_inst_data(
@@ -1041,8 +1038,6 @@ class PIDVisionApp:
             expand=self.object_box_expand,
             offset=offset,
             comment_box_expand=self.comment_box_expand,
-            global_ocr_results=self.ocr_results,
-            re_line=self.re_line,
             inst_labels=self.group_inst,
             other_labels=self.group_other,
             tag_label_groups=self.tag_label_groups,
@@ -1056,10 +1051,7 @@ class PIDVisionApp:
             for data in inst_data:
                 print(data)
 
-        if self.inst_data:
-            self.inst_data.extend(inst_data)
-        else:
-            self.inst_data = inst_data
+        self.inst_data.extend(inst_data)
 
     def capture_line(self, cropped_image):
         self.process_captured_text(cropped_image, 'line')
@@ -2346,7 +2338,6 @@ class PIDVisionApp:
         tk.messagebox.showinfo("License Status", f"Current Status: {status}")
 
     # endregion
-
 
 class ProgressWindow:
     def __init__(self, parent, total_pages):

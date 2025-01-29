@@ -501,10 +501,18 @@ def get_comment(ocr_results, dbox, box_expand, include_inside=False):
 # region Line Processing
 
 
-def process_line_data(img, ocr_results, re_line, simple=True, hough_params=None, canny_params=None,
+def process_line_data(img, ocr_results, re_line,
+                      simple=True,
+                      hough_params=None,
+                      canny_params=None,
                       extension_params=None,
-                      paint_line_thickness=5, line_join_threshold=20, line_box_scale=1.2, erosion_kernel=10,
-                      erosion_iterations=2, binary_threshold=200, line_img_scale=1.0,
+                      paint_line_thickness=5,
+                      line_join_threshold=20,
+                      line_box_scale=1.2,
+                      erosion_kernel=10,
+                      erosion_iterations=2,
+                      binary_threshold=200,
+                      line_img_scale=1.0,
                       debug_line=True,
                       remove_significant_lines_only=True,
                       detecto_boxes=None,
@@ -890,16 +898,19 @@ def show_houghlines(img, lines):
 
 def return_inst_data(prediction_data, img,
                      reader, instrument_reader_settings, reader_settings,
-                     expand=1.0, radius=180,
+                     expand=1.0,
+                     radius=180,
                      inst_labels=None,
                      other_labels=None,
                      min_scores=None,
-                     offset=None, global_ocr_results=None, comment_box_expand=30,
+                     offset=None,
+                     comment_box_expand=30,
                      tag_label_groups=None,
-                     re_line=None, capture_ocr=True,
-                     reader_sub_img_size=1300, reader_stride=1250,
+                     capture_ocr=True,
+                     reader_sub_img_size=1300,
+                     reader_stride=1250,
                      filter_ocr_threshold=0.9,
-                     line_params=None  # New parameter that accepts LineProcessingParams
+                     line_params=None
                      ):
     all_data = []
     group_inst = []
@@ -941,32 +952,20 @@ def return_inst_data(prediction_data, img,
         print('filtered local ocr results:\n', local_ocr_results)
 
     line_data = ''
-    if local_ocr_results and re_line:
+    if local_ocr_results and line_params.re_line:
         ocr_to_use = local_ocr_results
         line_data = process_line_data(
             img,
             ocr_to_use,
-            re_line,
-            simple=line_params.simple_mode,
-            hough_params=line_params.hough_params,
-            canny_params=line_params.canny_params,
-            extension_params=line_params.extension_params,
-            paint_line_thickness=line_params.paint_line_thickness,
-            line_join_threshold=line_params.line_join_threshold,
-            line_box_scale=line_params.line_box_scale,
-            erosion_kernel=line_params.erosion_kernel,
-            erosion_iterations=line_params.erosion_iterations,
-            binary_threshold=line_params.binary_threshold,
-            line_img_scale=line_params.line_img_scale,
-            debug_line=line_params.debug_line,
-            remove_significant_lines_only=line_params.remove_significant_lines_only,
+            **line_params.__dict__,
             detecto_boxes=detecto_boxes,
-        )
+        ) # if simple mode we return a single string,
+          # else we return a complex data object containing of multiple images
 
     for label, box, score, visual_elements in group_inst:
-        if line_params.simple_mode:  # if simple mode
+        if line_params.simple:  # if simple mode
             lines = line_data
-        elif re_line and line_data:  # complex mode
+        elif line_params.re_line and line_data:  # complex mode
             lines = get_lines_from_box(box, line_data, img_scale=line_params.line_img_scale)
             if lines:
                 if len(lines) == 1:
