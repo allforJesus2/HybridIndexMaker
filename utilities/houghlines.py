@@ -34,12 +34,32 @@ class ExtensionParams:
     look_ahead: int
     max_neighbors: int
 
+
 class HoughLinesApp:
     def __init__(self, window, params_callback=None, image=None, canny_params=None, hough_params=None,
                  extension_params=None):
         self.window = window
         self.window.title("Hough Lines GUI")
         self.params_callback = params_callback
+        self.window.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        # Create menu bar
+        self.menubar = tk.Menu(self.window)
+        self.window.config(menu=self.menubar)
+
+        # Create File menu
+        self.file_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="File", menu=self.file_menu)
+        self.file_menu.add_command(label="Open Image", command=self.open_image)
+        self.file_menu.add_command(label="Save Output Image", command=self.save_output_image)
+        self.file_menu.add_command(label="Save Lines Image", command=self.save_lines_image)
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Save Parameters", command=self.save_parameters)
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Exit", command=self.on_closing)
+
+        # Define standard slider width
+        self.SLIDER_WIDTH = 360
 
         # Initialize parameters with defaults or provided values
         self.canny_params = canny_params or {'low_threshold': 50, 'high_threshold': 150, 'aperture_size': 3}
@@ -53,16 +73,16 @@ class HoughLinesApp:
         self.extension_params = extension_params or {
             'merge_threshold': 10,
             'look_ahead': 20,
-            'max_neighbors':2,
+            'max_neighbors': 2,
         }
 
-        # Create main container frame
+        # Create main container frame without padding
         main_container = tk.Frame(window)
         main_container.pack(fill=tk.BOTH, expand=True)
 
-        # Create left frame for controls with a canvas and scrollbar
+        # Create left frame for controls
         control_frame = tk.Frame(main_container)
-        control_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+        control_frame.pack(side=tk.LEFT, fill=tk.Y)  # Removed padx and pady
 
         # Add a canvas and scrollbar to the control frame
         control_canvas = tk.Canvas(control_frame)
@@ -83,37 +103,37 @@ class HoughLinesApp:
         inner_control_frame = tk.Frame(control_canvas)
         control_canvas.create_window((0, 0), window=inner_control_frame, anchor="nw")
 
-        # Create right frame for canvas and scrollbars (unchanged)
+        # Create right frame for canvas without padding
         canvas_frame = tk.Frame(main_container)
-        canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)  # Removed padx and pady
 
-        # Add scrollbars (unchanged)
+        # Add scrollbars
         h_scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL)
         v_scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL)
 
-        # Create canvas (unchanged)
+        # Create canvas
         self.canvas = tk.Canvas(canvas_frame,
                                 xscrollcommand=h_scrollbar.set,
                                 yscrollcommand=v_scrollbar.set)
 
-        # Configure scrollbar commands (unchanged)
+        # Configure scrollbar commands
         h_scrollbar.config(command=self.canvas.xview)
         v_scrollbar.config(command=self.canvas.yview)
 
-        # Pack everything in the correct order (unchanged)
+        # Pack everything in the correct order
         h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
         v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Bind mouse wheel events for scrolling (unchanged)
-        self.canvas.bind('<MouseWheel>', self._on_mousewheel_y)  # Windows
-        self.canvas.bind('<Shift-MouseWheel>', self._on_mousewheel_x)  # Windows with Shift
-        self.canvas.bind('<Button-4>', self._on_mousewheel_y)  # Linux scroll up
-        self.canvas.bind('<Button-5>', self._on_mousewheel_y)  # Linux scroll down
-        self.canvas.bind('<Shift-Button-4>', self._on_mousewheel_x)  # Linux with Shift
-        self.canvas.bind('<Shift-Button-5>', self._on_mousewheel_x)  # Linux with Shift
+        # [Mouse wheel bindings remain unchanged]
+        self.canvas.bind('<MouseWheel>', self._on_mousewheel_y)
+        self.canvas.bind('<Shift-MouseWheel>', self._on_mousewheel_x)
+        self.canvas.bind('<Button-4>', self._on_mousewheel_y)
+        self.canvas.bind('<Button-5>', self._on_mousewheel_y)
+        self.canvas.bind('<Shift-Button-4>', self._on_mousewheel_x)
+        self.canvas.bind('<Shift-Button-5>', self._on_mousewheel_x)
 
-        # Initialize variables (unchanged)
+        # Initialize variables
         self.image_path = None
         self.original_image = image if image is not None else None
         self.processed_image = None
@@ -121,9 +141,20 @@ class HoughLinesApp:
         self.scale_factor = 1.0
         self.lines = None
 
-        # Create image conversion options (now inside inner_control_frame)
-        convert_frame = tk.LabelFrame(inner_control_frame, text="Image Conversion")
-        convert_frame.pack(pady=5, padx=5, fill="x")
+        # Create all sliders with standardized width
+        self.create_controls(inner_control_frame)
+
+        # Set initial values for sliders based on parameters
+        self.set_initial_values()
+
+        # Update image if initial image was provided
+        if self.original_image is not None:
+            self.update_image()
+
+    def create_controls(self, parent):
+        # Image conversion options
+        convert_frame = tk.LabelFrame(parent, text="Image Conversion")
+        convert_frame.pack(pady=2, padx=2, fill="x")
 
         self.convert_var = tk.StringVar(value="gray")
         tk.Radiobutton(convert_frame, text="Grayscale", variable=self.convert_var,
@@ -131,97 +162,59 @@ class HoughLinesApp:
         tk.Radiobutton(convert_frame, text="Binary", variable=self.convert_var,
                        value="binary", command=self.update_image).pack(side=tk.LEFT, padx=10)
 
-        # Add binary threshold slider (now inside inner_control_frame)
-        self.binary_threshold = tk.Scale(inner_control_frame, from_=0, to=255, orient=tk.HORIZONTAL,
-                                         command=self.update_image, label="Binary Threshold", length=200)
-        self.binary_threshold.set(127)
-        self.binary_threshold.pack(pady=5)
+        # Binary threshold slider
+        self.binary_threshold = self.create_slider(parent, "Binary Threshold", 0, 255, 127)
 
-        # Create Canny edge detection sliders (now inside inner_control_frame)
-        self.canny_low_slider = tk.Scale(inner_control_frame, from_=0, to=255, orient=tk.HORIZONTAL,
-                                         command=self.update_image, label="Canny Low Threshold", length=200)
-        self.canny_low_slider.set(50)
-        self.canny_low_slider.pack(pady=5)
+        # Canny edge detection sliders
+        self.canny_low_slider = self.create_slider(parent, "Canny Low Threshold", 0, 255, 50)
+        self.canny_high_slider = self.create_slider(parent, "Canny High Threshold", 0, 255, 150)
 
-        self.canny_high_slider = tk.Scale(inner_control_frame, from_=0, to=255, orient=tk.HORIZONTAL,
-                                          command=self.update_image, label="Canny High Threshold", length=200)
-        self.canny_high_slider.set(150)
-        self.canny_high_slider.pack(pady=5)
-
-        # Create aperture size radio buttons (now inside inner_control_frame)
-        aperture_frame = tk.LabelFrame(inner_control_frame, text="Aperture Size")
-        aperture_frame.pack(pady=5, padx=5, fill="x")
+        # Aperture size radio buttons
+        aperture_frame = tk.LabelFrame(parent, text="Aperture Size")
+        aperture_frame.pack(pady=2, padx=2, fill="x")
 
         self.aperture_var = tk.IntVar(value=3)
         for size in [3, 5, 7]:
             tk.Radiobutton(aperture_frame, text=str(size), variable=self.aperture_var,
                            value=size, command=self.update_image).pack(side=tk.LEFT, padx=10)
 
-        # Create Hough transform sliders (now inside inner_control_frame)
-        self.rho_slider = tk.Scale(inner_control_frame, from_=1, to=10, orient=tk.HORIZONTAL,
-                                   command=self.update_image, label="Rho", length=200)
-        self.rho_slider.set(1)
-        self.rho_slider.pack(pady=5)
+        # Hough transform sliders
+        self.rho_slider = self.create_slider(parent, "Rho", 1, 10, 1)
+        self.theta_slider = self.create_slider(parent, "Theta", 1, 90, 180)
+        self.threshold_slider = self.create_slider(parent, "Threshold", 1, 500, 100)
+        self.min_line_length_slider = self.create_slider(parent, "Min Line Length", 1, 500, 100)
+        self.max_line_gap_slider = self.create_slider(parent, "Max Line Gap", 1, 200, 80)
+        self.merge_threshold_slider = self.create_slider(parent, "Merge Threshold", 0, 30, 10)
+        self.look_ahead_slider = self.create_slider(parent, "Look Ahead", 0, 100, 20)
+        self.max_neighbors_slider = self.create_slider(parent, "Max Neighbors", 0, 10, 2)
 
-        self.theta_slider = tk.Scale(inner_control_frame, from_=1, to=90, orient=tk.HORIZONTAL,
-                                     command=self.update_image, label="Theta", length=200)
-        self.theta_slider.set(180)
-        self.theta_slider.pack(pady=5)
 
-        self.threshold_slider = tk.Scale(inner_control_frame, from_=1, to=500, orient=tk.HORIZONTAL,
-                                         command=self.update_image, label="Threshold", length=200)
-        self.threshold_slider.set(100)
-        self.threshold_slider.pack(pady=5)
+    def create_slider(self, parent, label, from_, to, default):
+        slider = tk.Scale(parent,
+                          from_=from_,
+                          to=to,
+                          orient=tk.HORIZONTAL,
+                          command=self.update_image,
+                          label=label,
+                          length=self.SLIDER_WIDTH)
+        slider.set(default)
+        slider.pack(pady=2)
+        return slider
 
-        self.min_line_length_slider = tk.Scale(inner_control_frame, from_=1, to=500, orient=tk.HORIZONTAL,
-                                               command=self.update_image, label="Min Line Length", length=200)
-        self.min_line_length_slider.set(100)
-        self.min_line_length_slider.pack(pady=5)
-
-        self.max_line_gap_slider = tk.Scale(inner_control_frame, from_=1, to=200, orient=tk.HORIZONTAL,
-                                            command=self.update_image, label="Max Line Gap", length=200)
-        self.max_line_gap_slider.set(80)
-        self.max_line_gap_slider.pack(pady=5)
-
-        self.merge_threshold_slider = tk.Scale(inner_control_frame, from_=0, to=30, orient=tk.HORIZONTAL,
-                                               command=self.update_image, label="Merge Threshold", length=200)
-        self.merge_threshold_slider.set(self.extension_params['merge_threshold'])
-        self.merge_threshold_slider.pack(pady=5)
-
-        self.look_ahead_slider = tk.Scale(inner_control_frame, from_=0, to=100, orient=tk.HORIZONTAL,
-                                          command=self.update_image, label="Look Ahead", length=200)
-        self.look_ahead_slider.set(self.extension_params['look_ahead'])
-        self.look_ahead_slider.pack(pady=5)
-
-        self.max_neighbors_slider = tk.Scale(inner_control_frame, from_=0, to=10, orient=tk.HORIZONTAL,
-                                          command=self.update_image, label="Max Neighbors", length=200)
-        self.max_neighbors_slider.set(self.extension_params['max_neighbors'])
-        self.max_neighbors_slider.pack(pady=5)
-
-        # Create buttons frame (now inside inner_control_frame)
-        button_frame = tk.Frame(inner_control_frame)
-        button_frame.pack(pady=10)
-
-        # Add buttons (unchanged)
-        tk.Button(button_frame, text="Open Image", command=self.open_image).pack(pady=2)
-        tk.Button(button_frame, text="Save Output Image", command=self.save_output_image).pack(pady=2)
-        tk.Button(button_frame, text="Save Lines Image", command=self.save_lines_image).pack(pady=2)
-        tk.Button(button_frame, text="Get Parameters", command=self.get_parameters).pack(pady=2)
-
-        # Set initial values for sliders based on parameters (unchanged)
+    def set_initial_values(self):
         self.canny_low_slider.set(self.canny_params['low_threshold'])
         self.canny_high_slider.set(self.canny_params['high_threshold'])
         self.aperture_var.set(self.canny_params['aperture_size'])
 
         self.rho_slider.set(self.hough_params['rho'])
-        self.theta_slider.set(self.hough_params['theta'] * 180 / np.pi)  # Convert radians to degrees
+        self.theta_slider.set(self.hough_params['theta'] * 180 / np.pi)
         self.threshold_slider.set(self.hough_params['threshold'])
         self.min_line_length_slider.set(self.hough_params['min_line_length'])
         self.max_line_gap_slider.set(self.hough_params['max_line_gap'])
 
-        # Update image if initial image was provided (unchanged)
-        if self.original_image is not None:
-            self.update_image()
+        self.merge_threshold_slider.set(self.extension_params['merge_threshold'])
+        self.look_ahead_slider.set(self.extension_params['look_ahead'])
+        self.max_neighbors_slider.set(self.extension_params['max_neighbors'])
 
     def _on_mousewheel_y(self, event):
         if event.num == 4 or event.delta > 0:
@@ -258,8 +251,7 @@ class HoughLinesApp:
             max_neighbors=self.max_neighbors_slider.get()
         )
 
-        if self.params_callback:
-            self.params_callback(canny_params, hough_params, extension_params)
+
 
         return canny_params, hough_params, extension_params
 
@@ -383,6 +375,38 @@ class HoughLinesApp:
             cv2.imwrite('lines_image.jpg', lines_image)
             os.startfile('lines_image.jpg')
             print("Lines image saved as lines_image.jpg")
+
+    def save_parameters(self):
+        """Save current parameters through the callback"""
+        if self.params_callback:
+            canny_params = CannyParams(
+                low_threshold=self.canny_low_slider.get(),
+                high_threshold=self.canny_high_slider.get(),
+                aperture_size=self.aperture_var.get()
+            )
+
+            hough_params = HoughParams(
+                rho=self.rho_slider.get(),
+                theta=(np.pi / 180) * self.theta_slider.get(),
+                threshold=self.threshold_slider.get(),
+                min_line_length=self.min_line_length_slider.get(),
+                max_line_gap=self.max_line_gap_slider.get()
+            )
+            extension_params = ExtensionParams(
+                merge_threshold=self.merge_threshold_slider.get(),
+                look_ahead=self.look_ahead_slider.get(),
+                max_neighbors=self.max_neighbors_slider.get()
+            )
+
+            self.params_callback(canny_params, hough_params, extension_params)
+            #tk.messagebox.showinfo("Success", "Parameters have been saved successfully!")
+
+    def on_closing(self):
+        """Handle window closing event"""
+        if tk.messagebox.askyesno("Save Parameters",
+                               "Would you like to save the current parameters before closing?"):
+            self.save_parameters()
+        self.window.destroy()
 
 
 # Example usage with callback

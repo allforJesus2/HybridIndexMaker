@@ -540,7 +540,6 @@ def process_line_data(img, ocr_results, re_line, simple=True, hough_params=None,
 
 
         if debug_line:
-            print('lines: ', lines)
             show_houghlines(img_cleaned, lines)
 
         significant_line_groups = {}
@@ -900,19 +899,7 @@ def return_inst_data(prediction_data, img,
                      re_line=None, capture_ocr=True,
                      reader_sub_img_size=1300, reader_stride=1250,
                      filter_ocr_threshold=0.9,
-                     hough_params=None,
-                     canny_params=None,
-                     extension_params=None,
-                     paint_line_thickness=5,
-                     line_join_threshold=20,
-                     line_box_scale=1.5,
-                     line_img_erosion=2,
-                     line_erosion_iterations=1,
-                     line_img_binary_threshold=200,
-                     line_img_scale=1.0,
-                     simple_line_mode=True,
-                     debug_line=True,
-                     remove_significant_lines_only=True
+                     line_params=None  # New parameter that accepts LineProcessingParams
                      ):
     all_data = []
     group_inst = []
@@ -920,6 +907,7 @@ def return_inst_data(prediction_data, img,
     got_one = False
     detecto_boxes = []
     pred_boxes = []
+
     for label, box, score, visual_elements in prediction_data:
         try:
             if score < min_scores[label]:
@@ -933,20 +921,16 @@ def return_inst_data(prediction_data, img,
         if label in other_labels:
             group_other.append((label, box, score, visual_elements))
 
-        # for ocr filtering
         if offset is not None:
-            # Add offset to prediction boxes for global OCR filtering
             offset_tensor = torch.tensor([offset[0], offset[1], offset[0], offset[1]])
             offset_box = box + offset_tensor
             pred_boxes.append(offset_box)
         else:
             pred_boxes.append(box)
 
-    # if no instruments return
     if not group_inst:
         return
 
-    # Get local OCR if needed
     local_ocr_results = None
     if capture_ocr:
         print('getting local ocr')
@@ -959,27 +943,31 @@ def return_inst_data(prediction_data, img,
     line_data = ''
     if local_ocr_results and re_line:
         ocr_to_use = local_ocr_results
-        line_data = process_line_data(img, ocr_to_use, re_line, simple=simple_line_mode,
-                                      hough_params=hough_params, canny_params=canny_params,
-                                      extension_params=extension_params,
-                                      paint_line_thickness=paint_line_thickness,
-                                      line_join_threshold=line_join_threshold,
-                                      line_box_scale=line_box_scale,
-                                      erosion_kernel=line_img_erosion,
-                                      erosion_iterations=line_erosion_iterations,
-                                      binary_threshold=line_img_binary_threshold,
-                                      line_img_scale=line_img_scale,
-                                      debug_line=debug_line,
-                                      remove_significant_lines_only=remove_significant_lines_only,
-                                      detecto_boxes=detecto_boxes,
-                                      )
-    print(line_data)
+        line_data = process_line_data(
+            img,
+            ocr_to_use,
+            re_line,
+            simple=line_params.simple_mode,
+            hough_params=line_params.hough_params,
+            canny_params=line_params.canny_params,
+            extension_params=line_params.extension_params,
+            paint_line_thickness=line_params.paint_line_thickness,
+            line_join_threshold=line_params.line_join_threshold,
+            line_box_scale=line_params.line_box_scale,
+            erosion_kernel=line_params.erosion_kernel,
+            erosion_iterations=line_params.erosion_iterations,
+            binary_threshold=line_params.binary_threshold,
+            line_img_scale=line_params.line_img_scale,
+            debug_line=line_params.debug_line,
+            remove_significant_lines_only=line_params.remove_significant_lines_only,
+            detecto_boxes=detecto_boxes,
+        )
+
     for label, box, score, visual_elements in group_inst:
-        if simple_line_mode:  # if simple mode
+        if line_params.simple_mode:  # if simple mode
             lines = line_data
-        else:  # complex mode
-            lines = get_lines_from_box(box, line_data, img_scale=line_img_scale)
-            # makes the end look cleaner
+        elif re_line and line_data:  # complex mode
+            lines = get_lines_from_box(box, line_data, img_scale=line_params.line_img_scale)
             if lines:
                 if len(lines) == 1:
                     lines = lines[0]
@@ -1015,7 +1003,6 @@ def return_inst_data(prediction_data, img,
         inst_type = find_closest_other(inst_center, group_other, label, radius, valid_types, tag_label_groups)
 
         comment = ''
-        # Apply offset only once and reuse offset_box that was created earlier for pred_boxes
         if offset is not None:
             offset_tensor = torch.tensor([offset[0], offset[1], offset[0], offset[1]])
             offset_box = box + offset_tensor
@@ -1024,12 +1011,11 @@ def return_inst_data(prediction_data, img,
 
         if local_ocr_results:
             print('getting local ocr comment')
-            # Use original box for local OCR since it's in local coordinates
             comment = get_comment(local_ocr_results, box, comment_box_expand)
 
         data = {
             'tag': tag,
-            'tag_no': "'" + tag_no,  # so excel wont delete the leading zeros
+            'tag_no': "'" + tag_no,
             'score': score,
             'box': offset_box,
             'label': label,
@@ -1041,7 +1027,6 @@ def return_inst_data(prediction_data, img,
         all_data.append(data)
 
     return all_data
-
 
 
 def get_valid_types_for_tag(tag, tag_label_groups):

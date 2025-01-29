@@ -32,6 +32,7 @@ import tkinter.simpledialog
 import xlwings as xw
 from tkinter import ttk, messagebox
 from licensing_system import LicenseManager
+from utilities.line_processing_params import LineProcessingParams
 
 class PIDVisionApp:
 
@@ -989,7 +990,8 @@ class PIDVisionApp:
             cropped_image,
             self.model_inst,
             threshold=self.nms_threshold,
-            square_size=self.pred_square_size, stride=self.pred_stride
+            square_size=self.pred_square_size,
+            stride=self.pred_stride
         )
 
         if not labels:
@@ -1006,6 +1008,26 @@ class PIDVisionApp:
 
         # Create prediction data with visual elements
         inst_prediction_data = zip(labels, boxes, scores, visual_elements_list)
+
+        # Create LineProcessingParams instance
+        line_params = LineProcessingParams(
+            simple_mode=self.simple_line_mode,
+            debug_line=self.debug_line,
+            remove_significant_lines_only=self.remove_significant_lines_only,
+            paint_line_thickness=self.paint_line_thickness,
+            line_join_threshold=self.line_join_threshold,
+            line_box_scale=self.line_box_scale,
+            erosion_kernel=self.line_img_erosion,
+            erosion_iterations=self.line_erosion_iterations,
+            binary_threshold=self.line_img_binary_threshold,
+            line_img_scale=self.line_img_scale,
+        )
+
+        # Update optional parameter groups if not in simple mode
+        if not self.simple_line_mode:
+            line_params.hough_params = self.hough_params
+            line_params.canny_params = self.canny_params
+            line_params.extension_params = self.extension_params
 
         # Process instrument data
         inst_data = return_inst_data(
@@ -1026,19 +1048,7 @@ class PIDVisionApp:
             tag_label_groups=self.tag_label_groups,
             capture_ocr=self.do_local_ocr,
             filter_ocr_threshold=self.filter_ocr_threshold,
-            hough_params=self.hough_params,
-            canny_params=self.canny_params,
-            extension_params=self.extension_params,
-            paint_line_thickness=self.paint_line_thickness,
-            line_join_threshold=self.line_join_threshold,
-            line_box_scale=self.line_box_scale,
-            line_img_erosion=self.line_img_erosion,
-            line_erosion_iterations=self.line_erosion_iterations,
-            line_img_binary_threshold=self.line_img_binary_threshold,
-            line_img_scale=self.line_img_scale,
-            simple_line_mode=self.simple_line_mode,
-            debug_line=self.debug_line,
-            remove_significant_lines_only=self.remove_significant_lines_only,
+            line_params=line_params  # Pass the LineProcessingParams instance
         )
 
         # Print and store instrument data
@@ -1049,8 +1059,7 @@ class PIDVisionApp:
         if self.inst_data:
             self.inst_data.extend(inst_data)
         else:
-            self.inst_data=inst_data
-
+            self.inst_data = inst_data
 
     def capture_line(self, cropped_image):
         self.process_captured_text(cropped_image, 'line')

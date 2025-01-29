@@ -239,7 +239,6 @@ def revaluate_overlapping_regions(results, reader, img, rs, min_overlap_threshol
             for result in new_results:
                 box = result[0]
                 adjusted_box = adjust_box_coordinates_with_offset(box, (x1, y1))
-                print('new result: ', result)
                 result = list(result)
                 result[0] = adjusted_box
                 final_results.append(result)
