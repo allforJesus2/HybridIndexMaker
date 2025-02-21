@@ -18,6 +18,7 @@ from utilities.multi_window_dictionary_maker import DictionaryBuilder
 from utilities.ocr_results_viewer import OCRViewer
 from utilities.reader_settings import SetReaderSettings
 from utilities.houghlines import HoughLinesApp
+from utilities.xlsx_data_puller import ExcelDataPullApp
 from tkinter import filedialog
 from auto_scroll import AutoScrollbar
 import easyocr
@@ -169,6 +170,7 @@ class PIDVisionApp:
         self.reports_menu = tk.Menu(self.data_menu, tearoff=0)
         self.reports_menu.add_command(label="Instrument Count (All Pages)", command=self.generate_instrument_count)
         self.reports_menu.add_command(label="Instrument Count (Single Page)", command=self.one_instrument_count)
+        self.reports_menu.add_command(label="Compile Instrument Counts", command=self.compile_excels)
         self.reports_menu.add_command(label="Filename PID List", command=self.make_pid_page_xlsx)
         self.reports_menu.add_command(label="Get OCR Results", command=self.get_ocr)
         self.data_menu.add_cascade(label="Generate Reports", menu=self.reports_menu)
@@ -252,7 +254,6 @@ class PIDVisionApp:
         self.license_menu.add_command(label="Activate License", command=self.activate_license)
         self.license_menu.add_command(label="Check License Status", command=self.check_license_status)
         self.menu_bar.add_cascade(label="License", menu=self.license_menu)
-
         
     def create_canvas_and_scrollbars(self):
         # Vertical and horizontal scrollbars for canvas
@@ -266,6 +267,9 @@ class PIDVisionApp:
                                 xscrollcommand=hbar.set, yscrollcommand=vbar.set)
         self.canvas.grid(row=0, column=0, sticky='nswe')
         self.canvas.update()  # wait till canvas is created
+        # Add the optimized canvas handler
+        self.optimized_canvas = OptimizedImageCanvas(self.canvas)
+
         vbar.configure(command=self.scroll_y)  # bind scrollbars to the canvas
         hbar.configure(command=self.scroll_x)
 
@@ -291,6 +295,7 @@ class PIDVisionApp:
         try:
             # load instrument recognition model
             self.load_pretrained_model(self.model_inst_path)
+
         except Exception as e:
             print('Error', e)
             print('load model failed. you will likely have to load the model from command')
@@ -405,8 +410,9 @@ class PIDVisionApp:
         self.simple_line_mode=True
         self.debug_line=True
         self.remove_significant_lines_only=True
-
-
+        self.remove_text_before=False
+        self.text_min_score=0.5
+        self.white_out_color=(255,255,255)
 
     def bind_events_to_canvas(self):
         # Bind events to the canvas
@@ -539,6 +545,8 @@ class PIDVisionApp:
 
     def load_image(self):
         if self.image_list:
+            if hasattr(self, 'optimized_canvas'):
+                self.optimized_canvas.clear_cache()
 
             self.image_path = self.image_list[self.current_image_index]
             print(self.image_path)
@@ -722,6 +730,13 @@ class PIDVisionApp:
             else:
                 self.go_to_page(1)
 
+            if not self.group_inst or not self.tag_label_groups:
+                if tk.messagebox.askyesno("Initialize Settings", "Initialize capture settings?"):
+                    # Open settings dialogs in sequence
+                    self.set_object_scores()
+                    self.categorize_labels()
+                    self.set_tag_label_groups()
+
     def create_images_from_pdf(self):
         # Ask for DPI value
         width = tk.simpledialog.askinteger("DPI", "Enter the image width:", initialvalue=5000)
@@ -789,45 +804,26 @@ class PIDVisionApp:
         self.show_image()
 
     def show_image(self, event=None):
-        # print('self.imscale', self.imscale)
-        # Get the current horizontal and vertical offsets
-        x_offset = self.canvas.xview()[0]
-        y_offset = self.canvas.yview()[0]
+        bbox1 = self.canvas.bbox(self.image_container)
+        if not bbox1:
+            return
 
-        # Print the offsets (you can adjust the formatting as needed)
-        # print(f"Horizontal Offset: {x_offset}, Vertical Offset: {y_offset}")
-        ''' Show image on the Canvas '''
-        bbox1 = self.canvas.bbox(self.image_container)  # get image area
         # Remove 1 pixel shift at the sides of the bbox1
         bbox1 = (bbox1[0] + 1, bbox1[1] + 1, bbox1[2] - 1, bbox1[3] - 1)
-        bbox2 = (self.canvas.canvasx(0),  # get visible area of the canvas
+        bbox2 = (self.canvas.canvasx(0),
                  self.canvas.canvasy(0),
                  self.canvas.canvasx(self.canvas.winfo_width()),
                  self.canvas.canvasy(self.canvas.winfo_height()))
-        bbox = [min(bbox1[0], bbox2[0]), min(bbox1[1], bbox2[1]),  # get scroll region box
-                max(bbox1[2], bbox2[2]), max(bbox1[3], bbox2[3])]
-        if bbox[0] == bbox2[0] and bbox[2] == bbox2[2]:  # whole image in the visible area
-            bbox[0] = bbox1[0]
-            bbox[2] = bbox1[2]
-        if bbox[1] == bbox2[1] and bbox[3] == bbox2[3]:  # whole image in the visible area
-            bbox[1] = bbox1[1]
-            bbox[3] = bbox1[3]
-        self.canvas.configure(scrollregion=bbox)  # set scroll region
-        x1 = max(bbox2[0] - bbox1[0], 0)  # get coordinates (x1,y1,x2,y2) of the image tile
-        y1 = max(bbox2[1] - bbox1[1], 0)
-        x2 = min(bbox2[2], bbox1[2]) - bbox1[0]
-        y2 = min(bbox2[3], bbox1[3]) - bbox1[1]
-        if int(x2 - x1) > 0 and int(y2 - y1) > 0:  # show image if it in the visible area
-            x = min(int(x2 / self.imscale), self.width)  # sometimes it is larger on 1 pixel...
-            y = min(int(y2 / self.imscale), self.height)  # ...and sometimes not
-            image = self.original_image.crop((int(x1 / self.imscale), int(y1 / self.imscale), x, y))
-            imagetk = ImageTk.PhotoImage(image.resize((int(x2 - x1), int(y2 - y1))))
-            imageid = self.canvas.create_image(max(bbox2[0], bbox1[0]), max(bbox2[1], bbox1[1]),
-                                               anchor='nw', image=imagetk)
-            self.canvas.lower(imageid)  # set image into background
-            self.canvas.imagetk = imagetk  # keep an extra reference to prevent garbage-collection
 
-        # After creating the image on the canvas, bring the crop rectangle to the front if it exists
+        # Configure scroll region
+        bbox = [min(bbox1[0], bbox2[0]), min(bbox1[1], bbox2[1]),
+                max(bbox1[2], bbox2[2]), max(bbox1[3], bbox2[3])]
+        self.canvas.configure(scrollregion=bbox)
+
+        # Use optimized canvas to show the image
+        self.optimized_canvas.show_image(self.original_image, self.imscale, bbox1, bbox2)
+
+        # Bring crop rectangle to front if it exists
         if self.crop_rectangle:
             self.canvas.tag_raise(self.crop_rectangle)
 
@@ -876,7 +872,6 @@ class PIDVisionApp:
                 fill='red',
                 font=('Arial', 8)
             )
-
 
     def end_crop(self, event):
         if self.crop_start:
@@ -1024,6 +1019,9 @@ class PIDVisionApp:
             hough_params = self.hough_params,
             canny_params = self.canny_params,
             extension_params = self.extension_params,
+            remove_text_before = self.remove_text_before,
+            text_min_score = self.text_min_score,
+            white_out_color = self.white_out_color
         )
 
         # Process instrument data
@@ -1201,18 +1199,20 @@ class PIDVisionApp:
         tree_frame = ttk.Frame(lower_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
 
-        # Create Treeview without fixed height to allow expansion
-        self.inst_tree = ttk.Treeview(tree_frame, columns=('Tag', 'Tag No', 'Type'),
+        # Create Treeview with updated columns
+        self.inst_tree = ttk.Treeview(tree_frame, columns=('Tag', 'Tag No', 'Type', 'Line'),
                                       show='headings')
 
         # Configure column widths and headings
         self.inst_tree.column('Tag', width=80, minwidth=80)
         self.inst_tree.column('Tag No', width=100, minwidth=100)
         self.inst_tree.column('Type', width=100, minwidth=100)
+        self.inst_tree.column('Line', width=120, minwidth=120)  # Add new column
 
         self.inst_tree.heading('Tag', text='Tag')
         self.inst_tree.heading('Tag No', text='Tag No')
         self.inst_tree.heading('Type', text='Type')
+        self.inst_tree.heading('Line', text='Line')  # Add new heading
 
         # Add vertical scrollbar for tree
         tree_scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL,
@@ -1302,7 +1302,9 @@ class PIDVisionApp:
             tree_item = self.inst_tree.insert('', tk.END, values=(
                 data.get('tag', ''),
                 data.get('tag_no', ''),
-                data.get('type', '')
+                data.get('type', ''),
+                data.get('line', '')  # Add line data
+
             ))
 
             # Store both the detection box and label text IDs in the mapping
@@ -1344,7 +1346,6 @@ class PIDVisionApp:
         self.inst_data = updated_data
 
     def edit_instrument(self, event):
-
         """Handle double-click editing of instrument data"""
         item = self.inst_tree.selection()[0]
         values = self.inst_tree.item(item)['values']
@@ -1383,7 +1384,9 @@ class PIDVisionApp:
 
         ttk.Label(frame, text="Line:").grid(row=3, column=0, padx=5, pady=5, sticky=tk.W)
         line_entry = ttk.Entry(frame)
-        if current_inst_data and 'line' in current_inst_data:
+        if len(values) > 3:  # Check if line value exists in the tree
+            line_entry.insert(0, values[3])
+        elif current_inst_data and 'line' in current_inst_data:
             line_entry.insert(0, current_inst_data['line'])
         line_entry.grid(row=3, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
 
@@ -1394,8 +1397,13 @@ class PIDVisionApp:
         comment_entry.grid(row=4, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
 
         def save_changes():
-            # Update tree view
-            self.inst_tree.item(item, values=(tag_entry.get(), tag_no_entry.get(), type_entry.get()))
+            # Update tree view with all fields including line
+            self.inst_tree.item(item, values=(
+                tag_entry.get(),
+                tag_no_entry.get(),
+                type_entry.get(),
+                line_entry.get()
+            ))
 
             # Update instrument data
             if current_inst_data:
@@ -1428,7 +1436,7 @@ class PIDVisionApp:
         x = self.data_window.winfo_x() - (self.data_window.winfo_width() // 2) - (width // 2)
         y = self.data_window.winfo_y() + (self.data_window.winfo_height() // 2) - (height // 2)
         edit_window.geometry(f'+{x}+{y}')
-
+    
     def append_data(self, excel_type='xlwings'):
         """
         Append data to Excel file using either xlwings or openpyxl, optimized for bulk writing.
@@ -1607,16 +1615,16 @@ class PIDVisionApp:
         :return: None
         """
         # Ensure all dictionary values are strings and empty strings for None
-        print('writing data: ',data)
-        processed_data = {k: str(v) if v is not None else '' for k, v in data.items()}
+        print('writing data: ', data)
+        
+        # Exclude visual elements from the data
+        processed_data = {k: str(v) if v is not None else '' for k, v in data.items() if 'visual_elements' not in k}
         print('processed data: ', processed_data)
 
         for col, (key, value) in enumerate(processed_data.items(), start=1):
-
             # Skip if value is an empty string
             if value == '':
                 continue
-
 
             if isinstance(worksheet, xw.main.Sheet):
                 # xlwings worksheet
@@ -1993,9 +2001,13 @@ class PIDVisionApp:
 
     def set_re_line(self):
         example = r'.*\"-[A-Z]{1,5}-[A-Z\d]{3,5}-.*'
-        self.re_line = tk.simpledialog.askstring("Line Regular Expression",
-                                                 f"Enter the Line Regular Expression or leave empty for no capture\nExample {example}:",
-                                                 initialvalue=self.re_line)
+        new_value = tk.simpledialog.askstring(
+            "Line Regular Expression",
+            f"Enter the Line Regular Expression or leave empty for no capture\nExample {example}:",
+            initialvalue=self.re_line
+        )
+        if new_value is not None:  # Only update if not cancelled
+            self.re_line = new_value
 
     def get_hough_canny_params(self):
         def set_canny_and_hough_params(cp, hp, ep):
@@ -2021,7 +2033,7 @@ class PIDVisionApp:
         line_params_window = tk.Toplevel()
         line_params_window.title("Line Parameters")
 
-        # Dictionary of parameters: {param_name: (variable_name, current_value, type_converter)}
+        # Dictionary of parameters: {param_name: (variable_name, current_value, type_converter, optional_tuple_length)}
         parameters = {
             "Join Threshold": ("line_join_threshold", self.line_join_threshold, int),
             "Line Thickness": ("paint_line_thickness", self.paint_line_thickness, int),
@@ -2032,18 +2044,50 @@ class PIDVisionApp:
             "Image Scale": ("line_img_scale", self.line_img_scale, float),
             "Simple Line Mode": ("simple_line_mode", self.simple_line_mode, bool),
             "Debug Line": ("debug_line", self.debug_line, bool),
-            "Remove Significant Lines Only": ("remove_significant_lines_only", self.remove_significant_lines_only, bool),
+            "Remove Significant Lines Only": (
+            "remove_significant_lines_only", self.remove_significant_lines_only, bool),
+            "Remove Text Before Filling": ("remove_text_before", self.remove_text_before, bool),
+            "Minimum Confidence to Remove Text": ("text_min_score", self.text_min_score, float),
+            "White out Color": ("white_out_color", self.white_out_color, (tuple, 3))
+            # Specify tuple length of 3 for RGB
         }
 
         # Container frame for better organization
         frame = tk.Frame(line_params_window, padx=10, pady=5)
         frame.pack(expand=True, fill='both')
 
-        # Dictionary to store StringVar and BooleanVar objects
+        # Dictionary to store variable objects
         param_vars = {}
 
+        def create_tuple_entry(parent, attr_name, current_value, tuple_length):
+            """Create multiple entries for tuple values"""
+            tuple_frame = tk.Frame(parent)
+            tuple_frame.pack(side='right', padx=5)
+
+            # Create an entry for each tuple element
+            tuple_vars = []
+            for i in range(tuple_length):
+                var = tk.StringVar(value=str(current_value[i]) if i < len(current_value) else "0")
+                entry = tk.Entry(tuple_frame, textvariable=var, width=5)
+                entry.pack(side='left', padx=2)
+                tuple_vars.append(var)
+
+            return tuple_vars
+
+        def validate_tuple_input(tuple_vars, converter):
+            """Validate and convert tuple input values"""
+            try:
+                return tuple(converter(var.get()) for var in tuple_vars)
+            except ValueError:
+                raise ValueError(f"Invalid tuple values: {[var.get() for var in tuple_vars]}")
+
         # Create input fields for each parameter
-        for label_text, (attr_name, current_value, converter) in parameters.items():
+        for label_text, param_info in parameters.items():
+            # Unpack parameter info
+            attr_name = param_info[0]
+            current_value = param_info[1]
+            converter = param_info[2]
+
             # Parameter container
             param_frame = tk.Frame(frame)
             param_frame.pack(fill='x', pady=5)
@@ -2052,7 +2096,11 @@ class PIDVisionApp:
             label = tk.Label(param_frame, text=f"{label_text}:")
             label.pack(side='left', padx=5)
 
-            if converter == bool:
+            if isinstance(converter, tuple) and converter[0] == tuple:
+                # Handle tuple parameters
+                tuple_length = converter[1]
+                param_vars[attr_name] = create_tuple_entry(param_frame, attr_name, current_value, tuple_length)
+            elif converter == bool:
                 # Checkbutton for boolean parameters
                 param_vars[attr_name] = tk.BooleanVar(value=current_value)
                 checkbox = tk.Checkbutton(param_frame, variable=param_vars[attr_name])
@@ -2066,14 +2114,23 @@ class PIDVisionApp:
         def apply_values():
             try:
                 # Update all parameters
-                for (attr_name, current_value, converter), var in zip(parameters.values(), param_vars.values()):
-                    if converter == bool:
-                        setattr(self, attr_name, var.get())
+                for label_text, param_info in parameters.items():
+                    attr_name, current_value, converter = param_info[:3]
+                    var = param_vars[attr_name]
+
+                    if isinstance(converter, tuple) and converter[0] == tuple:
+                        # Handle tuple parameters
+                        value = validate_tuple_input(var, int)  # Assuming RGB values are integers
+                    elif converter == bool:
+                        value = var.get()
                     else:
-                        setattr(self, attr_name, converter(var.get()))
+                        value = converter(var.get())
+
+                    setattr(self, attr_name, value)
+
                 line_params_window.destroy()
-            except ValueError:
-                messagebox.showerror("Error", "Please enter valid numbers")
+            except ValueError as e:
+                messagebox.showerror("Error", f"Invalid input: {str(e)}")
 
         # Button container
         button_frame = tk.Frame(frame)
@@ -2082,6 +2139,10 @@ class PIDVisionApp:
         # Apply button
         apply_button = tk.Button(button_frame, text="Apply", command=apply_values)
         apply_button.pack(expand=True)
+
+        # Cancel button
+        cancel_button = tk.Button(button_frame, text="Cancel", command=line_params_window.destroy)
+        cancel_button.pack(expand=True, padx=5)
 
     def set_association_radius(self):
         self.association_radius = tk.simpledialog.askfloat(prompt="Enter Object association radius",
@@ -2190,7 +2251,6 @@ class PIDVisionApp:
             self.debug_line = dbl
             self.do_local_ocr = dlo
             progress_window.destroy()
-
 
     def compile_excels(self):
         # NOW we compile all the xlsxs into one
@@ -2304,12 +2364,15 @@ class PIDVisionApp:
 
     def open_FAIA(self):
         faia_window = tk.Toplevel(self.root)
+        data_puller_window = tk.Toplevel(self.root)
 
+        ExcelDataPullApp(data_puller_window)
         FindAnInstrumentApp(faia_window, img_path=self.image_path)
 
     def open_image_editor(self):
         image_editor_window = tk.Toplevel(self.root)
-        ImageEditor(image_editor_window, folder=self.folder_path, image="ocr_capture.png")
+        # Pass current image path instead of static filename
+        ImageEditor(image_editor_window, folder=self.folder_path, image=self.image_path)
 
     def open_ocr_results_viewer(self):
         ocr_viewer_window = tk.Toplevel(self.root)
@@ -2383,6 +2446,81 @@ class ProgressWindow:
 
     def destroy(self):
         self.window.destroy()
+
+class OptimizedImageCanvas:
+    def __init__(self, canvas):
+        self.canvas = canvas
+        self.image_cache = {}  # Cache for storing downsampled images
+        self.max_cache_size = 5  # Maximum number of cached images
+        self.current_scale = 1.0
+        self.min_scale_for_full_res = 0.5  # Minimum scale at which to show full resolution
+
+    def clear_cache(self):
+        """Clear the image cache"""
+        self.image_cache.clear()
+
+    def get_downsampled_image(self, original_image, target_scale):
+        """Get a downsampled version of the image appropriate for the current zoom level"""
+        if target_scale >= self.min_scale_for_full_res:
+            return original_image
+
+        # Round scale to nearest 0.1 to prevent too many cached versions
+        cache_scale = round(target_scale * 10) / 10
+
+        if cache_scale in self.image_cache:
+            return self.image_cache[cache_scale]
+
+        # Calculate new dimensions
+        new_width = int(original_image.width * cache_scale)
+        new_height = int(original_image.height * cache_scale)
+
+        # Create downsampled version
+        downsampled = original_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+        # Manage cache size
+        if len(self.image_cache) >= self.max_cache_size:
+            oldest_scale = list(self.image_cache.keys())[0]
+            del self.image_cache[oldest_scale]
+
+        self.image_cache[cache_scale] = downsampled
+        return downsampled
+
+    def show_image(self, original_image, imscale, bbox1, bbox2):
+        """Show image on the Canvas with dynamic downsampling"""
+        bbox = [min(bbox1[0], bbox2[0]), min(bbox1[1], bbox2[1]),
+                max(bbox1[2], bbox2[2]), max(bbox1[3], bbox2[3])]
+
+        # Get visible area coordinates
+        x1 = max(bbox2[0] - bbox1[0], 0)
+        y1 = max(bbox2[1] - bbox1[1], 0)
+        x2 = min(bbox2[2], bbox1[2]) - bbox1[0]
+        y2 = min(bbox2[3], bbox1[3]) - bbox1[1]
+
+        if int(x2 - x1) > 0 and int(y2 - y1) > 0:
+            # Get appropriate image based on scale
+            display_image = self.get_downsampled_image(original_image, imscale)
+
+            # Calculate source coordinates in the downsampled image
+            scale_factor = display_image.width / original_image.width
+            src_x1 = int(x1 / imscale * scale_factor)
+            src_y1 = int(y1 / imscale * scale_factor)
+            src_x2 = min(int(x2 / imscale * scale_factor), display_image.width)
+            src_y2 = min(int(y2 / imscale * scale_factor), display_image.height)
+
+            # Crop and resize the region
+            image = display_image.crop((src_x1, src_y1, src_x2, src_y2))
+            image = image.resize((int(x2 - x1), int(y2 - y1)), Image.Resampling.NEAREST)
+
+            # Convert to PhotoImage and display
+            imagetk = ImageTk.PhotoImage(image)
+            imageid = self.canvas.create_image(
+                max(bbox2[0], bbox1[0]),
+                max(bbox2[1], bbox1[1]),
+                anchor='nw',
+                image=imagetk
+            )
+            self.canvas.lower(imageid)
+            self.canvas.imagetk = imagetk
 
 def set_window_logo(window, png_path, size=(64, 64)):
     """

@@ -23,13 +23,6 @@ def HardOCR(image, reader, reader_settings,
 
     return final_results
 
-def adjust_box_coordinates_with_offset(box, offset):
-    return [
-        (box[0][0] + offset[0], box[0][1] + offset[1]),
-        (box[1][0] + offset[0], box[1][1] + offset[1]),
-        (box[2][0] + offset[0], box[2][1] + offset[1]),
-        (box[3][0] + offset[0], box[3][1] + offset[1])
-    ]
 
 def split_image(img, sub_img_size, stride):
     # Get the size of the input image
@@ -40,24 +33,20 @@ def split_image(img, sub_img_size, stride):
     offsets = []
     for y in range(0, h, stride):
         for x in range(0, w, stride):
-            sub_img = img[y:y + sub_img_size, x:x + sub_img_size]
+            # Calculate actual size of this sub-image
+            actual_h = min(sub_img_size, h - y)
+            actual_w = min(sub_img_size, w - x)
 
-            # Pad the sub-image if necessary
-            pad_y = sub_img_size - sub_img.shape[0]
-            pad_x = sub_img_size - sub_img.shape[1]
-            if pad_y > 0 or pad_x > 0:
-                sub_img = cv2.copyMakeBorder(sub_img, 0, pad_y, 0, pad_x, cv2.BORDER_CONSTANT, value=(0, 0, 0))
-
-            sub_images.append(sub_img)
-            offsets.append((x, y))
+            # Only process sub-image if it has meaningful size
+            if actual_h > 0 and actual_w > 0:
+                sub_img = img[y:y + actual_h, x:x + actual_w]
+                sub_images.append(sub_img)
+                offsets.append((x, y))
 
     return sub_images, offsets
 
-def perform_ocr_on_subimages(img, reader, rs,
-                             sub_img_size=1300, stride=1250):
-    # Load the image using OpenCV
-    # img = cv2.imread(img_path)
 
+def perform_ocr_on_subimages(img, reader, rs, sub_img_size=1300, stride=1250):
     # Split the image into sub-images
     sub_images, offsets = split_image(img, sub_img_size, stride)
 
@@ -66,6 +55,7 @@ def perform_ocr_on_subimages(img, reader, rs,
     for i, (sub_img, offset) in enumerate(zip(sub_images, offsets)):
         print('\r', f'performing ocr on image {i} of {len(sub_images)}', end='')
         sub_results = reader.readtext(sub_img, **rs)
+
         # Adjust the box coordinates with the offset
         adjusted_results = []
         for result in sub_results:
@@ -73,11 +63,22 @@ def perform_ocr_on_subimages(img, reader, rs,
             adjusted_box = adjust_box_coordinates_with_offset(box, offset)
             result = list(result)
             result[0] = adjusted_box
-            adjusted_results.append(result)  # Appending adjusted box and text
+            adjusted_results.append(result)
 
         ocr_results.extend(adjusted_results)
 
     return ocr_results
+
+
+def adjust_box_coordinates_with_offset(box, offset):
+    return [
+        (box[0][0] + offset[0], box[0][1] + offset[1]),
+        (box[1][0] + offset[0], box[1][1] + offset[1]),
+        (box[2][0] + offset[0], box[2][1] + offset[1]),
+        (box[3][0] + offset[0], box[3][1] + offset[1])
+    ]
+
+
 def correct_for_rotated_text(img, results, reader, rs):
     # img = cv2.imread(img)
     corrected_results = []

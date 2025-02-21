@@ -7,7 +7,6 @@ from tkinter import filedialog, colorchooser, ttk, messagebox
 import time
 import threading
 
-
 class CropWindow(tk.Toplevel):
     def __init__(self, parent, image_path, coords, initial_width, initial_height):
         super().__init__(parent)

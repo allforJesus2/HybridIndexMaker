@@ -6,20 +6,23 @@ class LineProcessingParams:
     """Parameters for line processing in process_line_data function."""
 
     # Required parameters that match process_line_data signature
-    re_line: str  # Added this to match your suggestion
-    simple: bool = True  # Changed from simple_mode to match function signature
+    re_line: str
+    simple: bool = True
     debug_line: bool = True
     remove_significant_lines_only: bool = True
 
     # Image processing parameters
     paint_line_thickness: int = 8
     line_join_threshold: int = 20
-    line_box_scale: float = 1.2  # Updated to match process_line_data default
-    erosion_kernel: int = 10  # Changed from erosion_kernel to match function
+    line_box_scale: float = 1.2
+    erosion_kernel: int = 10
     erosion_iterations: int = 1
     binary_threshold: int = 200
     line_img_scale: float = 1.15
-    clean_img: bool = True  # Added to match process_line_data signature
+    clean_img: bool = True
+    remove_text_before: bool = False
+    text_min_score: float = 0.5
+    white_out_color: tuple = (255,255,255)
 
     # Optional parameter groups
     hough_params: Optional[Dict[str, Any]] = field(default_factory=lambda: {

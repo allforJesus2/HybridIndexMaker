@@ -1,3 +1,5 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import tkinter as tk
 from tkinter import Scale, HORIZONTAL, Button, Entry, ttk, Listbox, MULTIPLE
 import cv2
@@ -5,6 +7,11 @@ import easyocr
 from PIL import Image, ImageTk
 from tkinter import filedialog
 import platform
+try:
+    from easyocr_mosaic import HardOCR
+except:
+    from utilities.easyocr_mosaic import HardOCR
+
 class SetReaderSettings:
     def __init__(self, root, imgpath, reader, reader_settings=None, callback=None):
         self.root = root
@@ -16,6 +23,8 @@ class SetReaderSettings:
         self.original_image = Image.open(self.imgpath)
         self.original_image_ratio = self.original_image.width / self.original_image.height
         self.resize_id = None
+
+        self.ocr_mode = "Standard"  # Default mode
 
         # Define default settings with all parameters
         default_settings = {
@@ -222,15 +231,20 @@ class SetReaderSettings:
         if self.reader_settings['blocklist']:
             read_params['blocklist'] = self.reader_settings['blocklist']
 
+        # Get OCR mode
+        ocr_mode = self.mode_selector.get()
+
         # Remove parameters that aren't supported by the current decoder
         if read_params['decoder'] == 'greedy':
             # Greedy decoder doesn't support beamWidth
             read_params.pop('beamWidth', None)
 
-        results = self.reader.readtext(
-            self.imgpath,
-            **read_params
-        )
+        # Perform OCR based on selected mode
+        if ocr_mode == "Standard":
+            results = self.reader.readtext(self.imgpath, **read_params)
+        else:  # HardOCR mode
+            img = cv2.imread(self.imgpath)
+            results = HardOCR(img, self.reader, read_params)
 
         # Rest of the image display code remains the same
         img = cv2.imread(self.imgpath)
@@ -412,6 +426,16 @@ class SetReaderSettings:
         # Add Save & Close button
         save_close_button = Button(button_frame, text="Save & Close", command=self.save_and_close)
         save_close_button.pack(side="left", expand=True, fill="x", padx=(2, 0))
+
+        # Add OCR mode selection at the top of controls
+        mode_frame = tk.Frame(scrollable_frame)
+        mode_frame.pack(fill=tk.X, padx=5, pady=5)
+        tk.Label(mode_frame, text="OCR Mode:").pack(side=tk.LEFT)
+        self.mode_selector = ttk.Combobox(mode_frame, values=["Standard", "HardOCR"], state="readonly")
+        self.mode_selector.set(self.ocr_mode)
+        self.mode_selector.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+        self.mode_selector.bind('<<ComboboxSelected>>', lambda e: self.update_image())
+
 
         # Create labeled frames for parameter groups
         general_frame = tk.LabelFrame(scrollable_frame, text="General Parameters")

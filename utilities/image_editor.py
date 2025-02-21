@@ -12,6 +12,7 @@ class ImageEditor:
         self.root.title("Image Editor")
         self.current_file_path = image
         self.folder_path = folder
+
         # Image handling variables
         self.original_image = None
         self.display_image = None
@@ -20,20 +21,54 @@ class ImageEditor:
         self.contrast = 1.0
         self.erosion = 0
         self.dilation = 0
-        self.rotation = 0  # New rotation variable
+        self.rotation = 0
 
-        self.color_tolerance = 30  # Default color tolerance value
+        # Zoom and pan variables
+        self.zoom_scale = 1.0
+        self.pan_x = 0
+        self.pan_y = 0
+        self.drag_start_x = 0
+        self.drag_start_y = 0
+        self.is_panning = False
+
+        # Color variables
+        self.color_tolerance = 30
         self.selected_color = None
         self.is_bw = False
-        self.color_preview_label = None  # Label for showing color preview
-        self.color_operation = "No color change"  # Default color operation
+        self.color_preview_label = None
+        self.color_operation = "No color change"
 
+        self.setup_menu()
         self.setup_ui()
 
         if self.current_file_path:
-            self.original_image = Image.open(self.current_file_path)
-            self.reset_values()
-            self.update_image()
+            self.load_image_file(self.current_file_path)
+
+    def setup_menu(self):
+        """Setup menu bar with File and Edit menus"""
+        self.menubar = tk.Menu(self.root)
+        self.root.config(menu=self.menubar)
+
+        # File menu
+        file_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Load Image", command=self.load_image)
+        file_menu.add_command(label="Save As...", command=self.save_as)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.root.quit)
+
+        # Edit menu
+        edit_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Edit", menu=edit_menu)
+        edit_menu.add_command(label="Apply Changes", command=self.apply_changes)
+        edit_menu.add_command(label="Batch Apply", command=self.batch_apply_settings)
+        edit_menu.add_command(label="Reset Values", command=self.reset_values)
+
+        # View menu
+        view_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="View", menu=view_menu)
+        view_menu.add_command(label="Reset Zoom", command=self.reset_zoom)
+        view_menu.add_command(label="Reset Pan", command=self.reset_pan)
 
     def setup_ui(self):
         # Main container
@@ -45,8 +80,12 @@ class ImageEditor:
         control_frame.pack(side='left', fill='y', padx=(0, 10))
         control_frame.pack_propagate(False)  # Prevent frame from resizing
 
-        # Load image button
-        ttk.Button(control_frame, text="Load Image", command=self.load_image).pack(pady=(0, 10))
+        # Zoom control
+        zoom_frame = ttk.LabelFrame(control_frame, text="Zoom", padding=5)
+        zoom_frame.pack(fill='x', pady=(0, 10))
+        self.zoom_scale_widget = ttk.Scale(zoom_frame, from_=0.1, to=5.0, value=1.0,
+                                         orient='horizontal', command=self.update_image)
+        self.zoom_scale_widget.pack(fill='x')
 
         # Rotation control
         rotation_frame = ttk.LabelFrame(control_frame, text="Rotation", padding=5)
@@ -177,11 +216,34 @@ class ImageEditor:
         ttk.Button(control_frame, text="Save As...", command=self.save_as).pack(pady=5)
         ttk.Button(control_frame, text="Reset Values", command=self.reset_values).pack(pady=5)
 
-        # Canvas for image display
-        self.canvas = tk.Canvas(main_frame, width=640, height=480, bg='gray')
+        # Canvas for image display with scrollbars
+        canvas_frame = ttk.Frame(main_frame)
+        canvas_frame.pack(side='left', expand=True, fill='both')
+
+        # Add scrollbars
+        x_scrollbar = ttk.Scrollbar(canvas_frame, orient='horizontal')
+        y_scrollbar = ttk.Scrollbar(canvas_frame, orient='vertical')
+        self.canvas = tk.Canvas(canvas_frame, width=640, height=480,
+                                xscrollcommand=x_scrollbar.set,
+                                yscrollcommand=y_scrollbar.set,
+                                bg='gray')
+
+        # Configure scrollbars
+        x_scrollbar.config(command=self.canvas.xview)
+        y_scrollbar.config(command=self.canvas.yview)
+
+        # Pack scrollbars and canvas
+        x_scrollbar.pack(side='bottom', fill='x')
+        y_scrollbar.pack(side='right', fill='y')
         self.canvas.pack(side='left', expand=True, fill='both')
 
-        self.color_sampling_enabled = False
+        # Bind mouse events for zoom and pan
+        self.canvas.bind('<ButtonPress-1>', self.start_pan)
+        self.canvas.bind('<B1-Motion>', self.pan)
+        self.canvas.bind('<ButtonRelease-1>', self.stop_pan)
+        self.canvas.bind('<MouseWheel>', self.zoom_with_mouse)  # Windows
+        self.canvas.bind('<Button-4>', self.zoom_with_mouse)  # Linux scroll up
+        self.canvas.bind('<Button-5>', self.zoom_with_mouse)  # Linux scroll down
 
     def quick_rotate(self, angle):
         """Quickly rotate image by a multiple of 90 degrees"""
@@ -203,6 +265,67 @@ class ImageEditor:
             # Use regular rotation for arbitrary angles
             return img.rotate(angle, expand=True, resample=Image.BICUBIC)
 
+    def zoom_with_mouse(self, event):
+        """Handle mouse wheel zoom events"""
+        if not self.display_image:
+            return
+
+        # Get the current cursor position
+        cursor_x = self.canvas.canvasx(event.x)
+        cursor_y = self.canvas.canvasy(event.y)
+
+        # Determine zoom direction
+        if event.num == 5 or event.delta < 0:  # Zoom out
+            self.zoom_scale = max(0.1, self.zoom_scale - 0.1)
+        else:  # Zoom in
+            self.zoom_scale = min(5.0, self.zoom_scale + 0.1)
+
+        self.zoom_scale_widget.set(self.zoom_scale)
+        self.update_image()
+
+    def start_pan(self, event):
+        """Start panning the image"""
+        self.is_panning = True
+        self.drag_start_x = event.x
+        self.drag_start_y = event.y
+        self.canvas.config(cursor="fleur")
+
+    def pan(self, event):
+        """Pan the image"""
+        if not self.is_panning:
+            return
+
+        # Calculate the distance moved
+        dx = event.x - self.drag_start_x
+        dy = event.y - self.drag_start_y
+
+        # Update pan position
+        self.pan_x += dx
+        self.pan_y += dy
+
+        # Update drag start position
+        self.drag_start_x = event.x
+        self.drag_start_y = event.y
+
+        self.update_image()
+
+    def stop_pan(self, event):
+        """Stop panning the image"""
+        self.is_panning = False
+        self.canvas.config(cursor="")
+
+    def reset_zoom(self):
+        """Reset zoom to default"""
+        self.zoom_scale = 1.0
+        self.zoom_scale_widget.set(1.0)
+        self.update_image()
+
+    def reset_pan(self):
+        """Reset pan position"""
+        self.pan_x = 0
+        self.pan_y = 0
+        self.update_image()
+
     def update_image(self, *args):
         if self.original_image is None:
             return
@@ -212,16 +335,16 @@ class ImageEditor:
         contrast = self.contrast_scale.get()
         erosion = int(self.erosion_scale.get())
         dilation = int(self.dilation_scale.get())
-        rotation = float(self.rotation_scale.get())  # Get rotation angle
+        rotation = float(self.rotation_scale.get())
 
         # Apply adjustments
         img = self.original_image.copy()
 
-        # Apply rotation first to work with the original image
+        # Apply rotation first
         if rotation != 0:
             img = self.rotate_image(img, rotation)
 
-        # Apply brightness and contrast
+        # Apply other adjustments (brightness, contrast, etc.)
         if brightness != 1.0:
             enhancer = ImageEnhance.Brightness(img)
             img = enhancer.enhance(brightness)
@@ -233,7 +356,7 @@ class ImageEditor:
         if erosion > 0 or dilation > 0:
             img = self.apply_morphological_ops(img, erosion, dilation)
 
-        # Apply color operations if a color is selected and an operation is chosen
+        # Apply color operations
         if self.color_operation_var.get() != "No color change":
             if self.selected_color or all(v.get().isdigit() for v in [self.r_var, self.g_var, self.b_var]):
                 img = self.process_color(img)
@@ -242,20 +365,11 @@ class ImageEditor:
         if self.bw_var.get():
             img = self.convert_to_bw(img)
 
-        # Resize image to fit canvas while maintaining aspect ratio
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-
-        # Calculate scaling factor
-        img_width, img_height = img.size
-        width_ratio = canvas_width / img_width
-        height_ratio = canvas_height / img_height
-        scale_factor = min(width_ratio, height_ratio)
-
-        # Resize image
-        new_width = int(img_width * scale_factor)
-        new_height = int(img_height * scale_factor)
-        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        # Apply zoom
+        if self.zoom_scale != 1.0:
+            new_width = int(img.width * self.zoom_scale)
+            new_height = int(img.height * self.zoom_scale)
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
         # Convert to PhotoImage for display
         self.display_image = img
@@ -263,8 +377,21 @@ class ImageEditor:
 
         # Update canvas
         self.canvas.delete("all")
-        self.canvas.create_image(canvas_width // 2, canvas_height // 2,
-                                 image=self.photo, anchor='center')
+
+        # Calculate center position with pan offset
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        image_width = self.photo.width()
+        image_height = self.photo.height()
+
+        x = (canvas_width - image_width) // 2 + self.pan_x
+        y = (canvas_height - image_height) // 2 + self.pan_y
+
+        # Create image on canvas
+        self.canvas.create_image(x, y, image=self.photo, anchor='nw')
+
+        # Update canvas scroll region
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def reset_values(self):
         """Reset all adjustment values to their defaults"""
@@ -336,7 +463,6 @@ class ImageEditor:
         # Convert back to PIL image
         return Image.fromarray(rgba)
 
-
     def remove_color(self, img):
         """Remove or replace selected color from image within tolerance range"""
         if not self.color_removal_var.get():  # Check if color removal is enabled
@@ -383,7 +509,6 @@ class ImageEditor:
 
         # Convert back to PIL image
         return Image.fromarray(rgba)
-
 
     def enable_color_sampling(self):
         """Enable color sampling mode"""

@@ -10,7 +10,7 @@ import openpyxl
 import os
 import torch
 from new_fns import *
-from easyocr_mosaic import HardOCR
+from utilities.easyocr_mosaic import HardOCR
 import tkinter as tk
 from tkinter import ttk
 import cv2
@@ -144,35 +144,53 @@ def show_image_in_tkinter(filled_img, title="Image View"):
     frame = tk.Frame(debug_window)
     frame.pack(expand=True, fill='both')
 
-    # Create canvas with scrollbars
+    # Create canvas and scrollbars
     canvas = tk.Canvas(frame, width=min(img_width, max_width), height=min(img_height, max_height))
-    h_scrollbar = tk.Scrollbar(frame, orient='horizontal', command=canvas.xview)
-    v_scrollbar = tk.Scrollbar(frame, orient='vertical', command=canvas.yview)
+    h_scrollbar = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=canvas.xview)
+    v_scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
 
     # Configure scrollbars
     canvas.configure(xscrollcommand=h_scrollbar.set, yscrollcommand=v_scrollbar.set)
 
-    # Grid layout for canvas and scrollbars
-    canvas.grid(row=0, column=0, sticky='nsew')
-    h_scrollbar.grid(row=1, column=0, sticky='ew')
-    v_scrollbar.grid(row=0, column=1, sticky='ns')
+    # Pack layout (changed from grid to match HoughLinesApp)
+    h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+    v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-    # Configure frame grid weights
-    frame.grid_rowconfigure(0, weight=1)
-    frame.grid_columnconfigure(0, weight=1)
-
-    # Create label in the canvas
-    label = tk.Label(canvas, image=photo)
-    label.image = photo  # Keep a reference!
-
-    # Add label to canvas
-    canvas.create_window(0, 0, anchor='nw', window=label)
+    # Create the image directly on the canvas (no Label needed)
+    canvas.create_image(0, 0, image=photo, anchor=tk.NW)
 
     # Configure canvas scrolling region
-    canvas.configure(scrollregion=canvas.bbox('all'))
+    canvas.configure(scrollregion=(0, 0, img_width, img_height))
+
+    # Store photo reference to prevent garbage collection
+    canvas.photo = photo
+
+    # Add mousewheel scrolling functions
+    def _on_mousewheel_y(event):
+        if event.num == 4 or event.delta > 0:
+            canvas.yview_scroll(-1, "units")
+        else:
+            canvas.yview_scroll(1, "units")
+
+    def _on_mousewheel_x(event):
+        if event.num == 4 or event.delta > 0:
+            canvas.xview_scroll(-1, "units")
+        else:
+            canvas.xview_scroll(1, "units")
+
+    # Bind mousewheel events to canvas
+    canvas.bind('<MouseWheel>', _on_mousewheel_y)  # Windows
+    canvas.bind('<Button-4>', _on_mousewheel_y)  # Linux
+    canvas.bind('<Button-5>', _on_mousewheel_y)  # Linux
+    canvas.bind('<Shift-MouseWheel>', _on_mousewheel_x)  # Windows
+    canvas.bind('<Shift-Button-4>', _on_mousewheel_x)  # Linux
+    canvas.bind('<Shift-Button-5>', _on_mousewheel_x)  # Linux
 
     # Make the window stay on top (optional)
     debug_window.lift()
+
+    return debug_window  # Return window reference to prevent garbage collection
 
 # endregion
 
@@ -502,7 +520,6 @@ def get_comment(ocr_results, dbox, box_expand, include_inside=False):
 
 
 def process_line_data(img, ocr_results, re_line,
-                      simple=True,
                       hough_params=None,
                       canny_params=None,
                       extension_params=None,
@@ -517,16 +534,29 @@ def process_line_data(img, ocr_results, re_line,
                       remove_significant_lines_only=True,
                       detecto_boxes=None,
                       clean_img=True,
+                      simple=True,
+                      remove_text_before=False,
+                      text_min_score=0.5,
+                      white_out_color=(255,255,255)
                       ):
     """Process line-related data from an image and OCR results.
 
     Returns:
         dict: Keys are line text, values are dict containing 'image' and 'color'
     """
-    if not simple and hough_params and canny_params:
+    if not ocr_results:
+        return
+
+    if simple:
+        ocr_line_txt = get_text_in_ocr_results(re_line, ocr_results)
+        return ocr_line_txt[0][1] if ocr_line_txt else ''
+
+    line_data = {}
+    if hough_params and canny_params and re_line:
 
         if clean_img:
-            img_cleaned = remove_objects_and_text_from_img(img, ocr_results, detecto_boxes)
+            img_cleaned = remove_objects_and_text_from_img(img, ocr_results, detecto_boxes,
+                                                           color=white_out_color, text_min_score=text_min_score)
         else:
             img_cleaned = img
 
@@ -534,7 +564,7 @@ def process_line_data(img, ocr_results, re_line,
         gray = cv2.cvtColor(img_cleaned, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray, canny_params['low_threshold'], canny_params['high_threshold'],
                           apertureSize=canny_params['aperture_size'])
-        lines = cv2.HoughLinesP(edges, hough_params['rho'], hough_params['theta'],
+        hough_lines = cv2.HoughLinesP(edges, hough_params['rho'], hough_params['theta'],
                                 hough_params['threshold'],
                                 minLineLength=hough_params['min_line_length'],
                                 maxLineGap=hough_params['max_line_gap'])
@@ -544,25 +574,33 @@ def process_line_data(img, ocr_results, re_line,
             la = extension_params['look_ahead']
             mn = extension_params['max_neighbors']
             if mt != 0 and la != 0:
-                lines = extend_line_vertices_optimized(lines, mt, la, mn)
+                hough_lines = extend_line_vertices_optimized(hough_lines, mt, la, mn)
 
 
         if debug_line:
-            show_houghlines(img_cleaned, lines)
+            show_houghlines(img_cleaned, hough_lines)
 
         significant_line_groups = {}
-        line_boxes = {}
-        all_line_groups = group_lines(lines, max_distance=line_join_threshold) # joins lines by endpoint to create groups
-        ocr_lines = get_text_in_ocr_results(re_line, ocr_results)
-        ocr_lines = scale_ocr_box_additive(ocr_lines, line_box_scale)
+        all_line_groups = group_lines(hough_lines, max_distance=line_join_threshold) # joins lines by endpoint to create groups
+        ocr_line_txt = get_text_in_ocr_results(re_line, ocr_results)
+        ocr_line_txt = scale_ocr_box_additive(ocr_line_txt, line_box_scale)
 
         sig_line_group_list = []
         for line_group in all_line_groups:
-            for box, text, confidence in ocr_lines:
+            for box, text, confidence in ocr_line_txt:
                 if box_intersects_line(box, line_group):
                     significant_line_groups.setdefault(text, []).append(line_group)
-                    line_boxes.setdefault(text, []).append(box)
                     sig_line_group_list.append(line_group)
+
+        line_boxes = {}
+        # Add all OCR boxes to line_boxes and ensure each text has an entry in significant_line_groups
+        for box, text, confidence in ocr_line_txt:
+            line_boxes.setdefault(text, []).append(box)
+            if text not in significant_line_groups:
+                significant_line_groups[text] = []
+
+        if remove_text_before:
+            img = remove_text_from_img(img, ocr_results, color=white_out_color, score_thresh=text_min_score)
 
         if remove_significant_lines_only:
             img_line_groups_removed = white_out_line_groups(img, sig_line_group_list, paint_line_thickness)
@@ -572,6 +610,9 @@ def process_line_data(img, ocr_results, re_line,
         img_lines_removed_gray = cv2.cvtColor(img_line_groups_removed, cv2.COLOR_BGR2GRAY)
         _, thresholded_image = cv2.threshold(img_lines_removed_gray, binary_threshold, 255, cv2.THRESH_BINARY)
         thresholded_3channel = cv2.cvtColor(thresholded_image, cv2.COLOR_GRAY2BGR)
+
+
+
 
         kernel = np.ones((erosion_kernel, erosion_kernel), np.uint8)
         img_line_groups_removed_eroded = cv2.erode(thresholded_3channel, kernel, iterations=erosion_iterations)
@@ -587,7 +628,7 @@ def process_line_data(img, ocr_results, re_line,
                 interpolation=cv2.INTER_NEAREST
             )
 
-        line_data = {}
+
         for line_text in significant_line_groups:
             color = generate_color(line_text)
 
@@ -619,11 +660,122 @@ def process_line_data(img, ocr_results, re_line,
                 'image': processed_img,
                 'color': color
             }
-    else:
-        ocr_lines = get_text_in_ocr_results(re_line, ocr_results)
-        line_data = ocr_lines[0][1] if ocr_lines else ''
 
     return line_data
+
+def process_line_data_v2(img, ocr_results, re_line,
+                      hough_params=None,
+                      canny_params=None,
+                      extension_params=None,
+                      paint_line_thickness=5,
+                      line_join_threshold=20,
+                      line_box_scale=1.2,
+                      erosion_kernel=10,
+                      erosion_iterations=2,
+                      binary_threshold=200,
+                      line_img_scale=1.0,
+                      debug_line=True,
+                      remove_significant_lines_only=True,
+                      detecto_boxes=None,
+                      clean_img=True,
+                      simple=True,
+                      remove_text_before=False,
+                      text_min_score=0.5,
+                      white_out_color=(255,255,255)
+                      ):
+    """Process line-related data from an image and OCR results.
+
+    Returns:
+        dict: Keys are line text, values are dict containing 'image' and 'color'
+    """
+    if not ocr_results:
+        return
+
+    if simple:
+        ocr_line_txt = get_text_in_ocr_results(re_line, ocr_results)
+        return ocr_line_txt[0][1] if ocr_line_txt else ''
+
+    line_data = {}
+    if not (hough_params and canny_params and re_line):
+        return line_data
+
+    if clean_img:
+        img_cleaned = remove_objects_and_text_from_img(img, ocr_results, detecto_boxes,
+                                                       color=white_out_color, text_min_score=text_min_score)
+    else:
+        img_cleaned = img
+
+    # Original image processing code remains the same until the flood fill part
+    gray = cv2.cvtColor(img_cleaned, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, canny_params['low_threshold'], canny_params['high_threshold'],
+                      apertureSize=canny_params['aperture_size'])
+    hough_lines = cv2.HoughLinesP(edges, hough_params['rho'], hough_params['theta'],
+                            hough_params['threshold'],
+                            minLineLength=hough_params['min_line_length'],
+                            maxLineGap=hough_params['max_line_gap'])
+
+    if debug_line:
+        show_houghlines(img_cleaned, hough_lines)
+
+    # group lines whose endpoints are close
+    all_line_groups = group_lines(hough_lines, max_distance=line_join_threshold) # joins lines by endpoint to create groups
+
+    # get and scale up ocr line id text results
+    ocr_line_txt = get_text_in_ocr_results(re_line, ocr_results)
+    ocr_line_txt = scale_ocr_box_additive(ocr_line_txt, line_box_scale)
+
+    # remove all the lines and process the image so we can do a good floodfill
+    if remove_text_before:
+        img = remove_text_from_img(img, ocr_results, color=white_out_color, score_thresh=text_min_score)
+    img_line_groups_removed = white_out_line_groups(img, all_line_groups, paint_line_thickness)
+    img_lines_removed_gray = cv2.cvtColor(img_line_groups_removed, cv2.COLOR_BGR2GRAY)
+    _, thresholded_image = cv2.threshold(img_lines_removed_gray, binary_threshold, 255, cv2.THRESH_BINARY)
+    thresholded_3channel = cv2.cvtColor(thresholded_image, cv2.COLOR_GRAY2BGR)
+    kernel = np.ones((erosion_kernel, erosion_kernel), np.uint8)
+    img_line_groups_removed_eroded = cv2.erode(thresholded_3channel, kernel, iterations=erosion_iterations)
+    # Scale the image before flood fill if line_img_scale is not 1.0
+    if line_img_scale != 1.0:
+        height, width = img_line_groups_removed_eroded.shape[:2]
+        new_height = int(height * line_img_scale)
+        new_width = int(width * line_img_scale)
+        img_line_groups_removed_eroded = cv2.resize(
+            img_line_groups_removed_eroded,
+            (new_width, new_height),
+            interpolation=cv2.INTER_NEAREST
+        )
+
+    # make colors
+    line_color_data = {}
+    for box, line_text, confidence in ocr_line_txt:
+        color = generate_color(line_text)
+        line_color_data[line_text]=color
+
+    pics = []
+    for box, text, confidence in ocr_line_txt:
+
+        scaled_box = scale_box(box, line_img_scale) if line_img_scale != 1.0 else box
+
+        for line_group in all_line_groups:
+
+            scaled_line_group = scale_line_group(line_group, line_img_scale) if line_img_scale != 1.0 else line_group
+
+            # grab the color
+            color = line_color_data[text]
+
+            # Process the image with scaled components
+            processed_img = place_lines_on_image_and_flood_fill(
+                img_line_groups_removed_eroded,
+                scaled_line_group,
+                color,
+                scaled_box,
+                line_thickness=max(1, int(paint_line_thickness * line_img_scale)),
+                debug=debug_line
+            )
+
+            pics.append(processed_img)
+
+    return line_color_data, pics
+
 
 def get_lines_from_box(box, line_data, img_scale=1.0):
     lines = []
@@ -725,9 +877,6 @@ def multi_region_flood_fill(seed_pixel_boxes, line_img, expand_scale):
 
     # Return the filled image
     return img
-
-
-
 
 def region_mode_color(box, img, img_scale):
     x_min, y_min, x_max, y_max = box.tolist()
@@ -835,8 +984,12 @@ def box_intersects_line(box, line_group, scale=1.0):
 
     return False
 
+def remove_objects_and_text_from_img(img, ocr_results, detecto_boxes, color=(255, 255, 255), text_min_score=0.5):
+    img = remove_text_from_img(img, ocr_results, color, text_min_score)
+    img = remove_objects_from_img(img, detecto_boxes, color)
+    return img
 
-def remove_objects_and_text_from_img(img, ocr_results, detecto_boxes, color=(255, 255, 255), score_thresh=0.5):
+def remove_text_from_img(img, ocr_results, color=(255, 255, 255), score_thresh=0.5):
     img = img.copy()
     # img is a cv2 img
     for result in ocr_results:
@@ -851,6 +1004,11 @@ def remove_objects_and_text_from_img(img, ocr_results, detecto_boxes, color=(255
         # White out the text region
         cv2.rectangle(img, (int(box_x1), int(box_y1)), (int(box_x2), int(box_y2)), color, -1)
 
+    return img
+
+def remove_objects_from_img(img, detecto_boxes, color=(255, 255, 255)):
+    img = img.copy()
+    # img is a cv2 img
     for box in detecto_boxes:
         box_x1, box_y1, box_x2, box_y2 = map(int, box)
         # White out the object region
@@ -951,27 +1109,22 @@ def return_inst_data(prediction_data, img,
         local_ocr_results = filter_ocr_results(local_ocr_results, pred_boxes, overlap_threshold=filter_ocr_threshold)
         print('filtered local ocr results:\n', local_ocr_results)
 
-    line_data = ''
-    if local_ocr_results and line_params.re_line:
-        ocr_to_use = local_ocr_results
-        line_data = process_line_data(
-            img,
-            ocr_to_use,
-            **line_params.__dict__,
-            detecto_boxes=detecto_boxes,
-        ) # if simple mode we return a single string,
-          # else we return a complex data object containing of multiple images
+    line_data = process_line_data(
+        img,
+        local_ocr_results,
+        **line_params.__dict__,
+        detecto_boxes=detecto_boxes,
+    )# line_color_data, pics
 
     for label, box, score, visual_elements in group_inst:
-        if line_params.simple:  # if simple mode
+        if line_params.simple: # if simple mode
             lines = line_data
-        elif line_params.re_line and line_data:  # complex mode
+        elif line_data: # complex mode
             lines = get_lines_from_box(box, line_data, img_scale=line_params.line_img_scale)
-            if lines:
-                if len(lines) == 1:
-                    lines = lines[0]
-            else:
-                lines = ''
+            if lines and len(lines) == 1:
+                lines = lines[0]
+        else:
+            lines = ''
 
         tag, tag_no = '', ''
         x_min, y_min, x_max, y_max = map(int, box.tolist())
@@ -1027,7 +1180,6 @@ def return_inst_data(prediction_data, img,
 
     return all_data
 
-
 def get_valid_types_for_tag(tag, tag_label_groups):
     # For each key in tag_label_groups, split it into individual tags
     # and check if our tag starts with any of them
@@ -1074,7 +1226,6 @@ def find_closest_other(inst_center, group_other, current_label, radius, valid_ty
             closest_label = label
 
     return closest_label
-
 
 def filter_ocr_results(ocr_results, pred_boxes, overlap_threshold=.9):
     filtered_results = []

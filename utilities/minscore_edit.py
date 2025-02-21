@@ -114,8 +114,8 @@ class SliderApp:
             self.sliders[label + "_display"].pack(side="left")
 
             # Bind the slider change events
-            self.sliders[label].bind("<Motion>", lambda event, label=label: self.update_display(label))
-            self.sliders[label].bind("<ButtonRelease-1>", lambda event, label=label: self.update_display(label))
+            self.sliders[label].bind("<Motion>", lambda event, lbl=label: self.update_display(lbl))
+            self.sliders[label].bind("<ButtonRelease-1>", lambda event, lbl=label: self.update_display(lbl))
 
     def set_all_values(self):
         try:

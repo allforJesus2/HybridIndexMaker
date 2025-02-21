@@ -3,29 +3,37 @@ from tkinter import ttk, filedialog, messagebox
 from openpyxl import load_workbook
 
 
-class ExcelSearchApp:
-    def __init__(self, root):
+class ExcelDataPullApp:
+    def __init__(self, root, excel_path=None):
         self.root = root
         self.root.title("Excel Search Application")
         self.headers = []
         self.entry_widgets = {}
         self.unique_values = {}  # Store unique values for each column
-        self.excel_path = None
+        self.excel_path = excel_path
 
-        # Rest of initialization code remains the same until the select_file method
+        # Main container
         main_container = ttk.Frame(root, padding="10")
-        main_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_container.pack(expand=True, fill="both")
 
-        # File selection
+        # File selection frame
         file_frame = ttk.Frame(main_container)
-        file_frame.grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky=(tk.W, tk.E))
-        ttk.Button(file_frame, text="Select Excel File", command=self.select_file).grid(row=0, column=0, padx=5)
+        file_frame.pack(fill="x", pady=(0, 10))
+
+        select_file_btn = ttk.Button(file_frame, text="Select Excel File", command=self.select_file)
+        select_file_btn.pack(side="left", padx=5)
+
         self.file_label = ttk.Label(file_frame, text="No file selected")
-        self.file_label.grid(row=0, column=1, sticky=tk.W)
+        self.file_label.pack(side="left")
+
+        # Create container for input and output frames
+        content_container = ttk.Frame(main_container)
+        content_container.pack(expand=True, fill="both")
 
         # Input Frame with scrollbar
-        input_frame = ttk.LabelFrame(main_container, text="Search Criteria", padding="5")
-        input_frame.grid(row=1, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        input_frame = ttk.LabelFrame(content_container, text="Search Criteria", padding="5")
+        input_frame.pack(side="left", fill="both", expand=True, padx=5)
+
         self.input_canvas = tk.Canvas(input_frame)
         scrollbar = ttk.Scrollbar(input_frame, orient="vertical", command=self.input_canvas.yview)
         self.scrollable_frame = ttk.Frame(self.input_canvas)
@@ -38,17 +46,18 @@ class ExcelSearchApp:
         self.input_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         self.input_canvas.configure(yscrollcommand=scrollbar.set)
 
-        self.input_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        self.input_canvas.pack(side="left", fill="both", expand=True)
 
         # Output Frame
-        output_frame = ttk.LabelFrame(main_container, text="Output Settings", padding="5")
-        output_frame.grid(row=1, column=1, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        output_frame = ttk.LabelFrame(content_container, text="Output Settings", padding="5")
+        output_frame.pack(side="left", fill="both", expand=True, padx=5)
 
         ttk.Label(output_frame, text="Available Columns:").pack(anchor="w")
         self.available_listbox = tk.Listbox(output_frame, height=6)
         self.available_listbox.pack(fill="x", pady=(0, 5))
 
+        # Button frame for add/remove
         btn_frame = ttk.Frame(output_frame)
         btn_frame.pack(fill="x", pady=5)
         ttk.Button(btn_frame, text="Add →", command=self.add_column).pack(side="left", expand=True, padx=2)
@@ -61,17 +70,19 @@ class ExcelSearchApp:
         self.selected_listbox = tk.Listbox(selected_frame, height=6)
         self.selected_listbox.pack(side="left", fill="x", expand=True)
 
+        # Order buttons frame
         order_btn_frame = ttk.Frame(selected_frame)
         order_btn_frame.pack(side="left", padx=2)
         ttk.Button(order_btn_frame, text="▲", command=self.move_up).pack(pady=2)
         ttk.Button(order_btn_frame, text="▼", command=self.move_down).pack(pady=2)
 
+        # Separator frame
         sep_frame = ttk.Frame(output_frame)
         sep_frame.pack(fill="x", pady=(0, 10))
         ttk.Label(sep_frame, text="Separator:").pack(side="left")
         self.separator_entry = ttk.Entry(sep_frame, width=5)
         self.separator_entry.pack(side="left", padx=5)
-        self.separator_entry.insert(0, " | ")
+        self.separator_entry.insert(0, "")
 
         ttk.Button(output_frame, text="Pull Data", command=self.pull_data).pack(fill="x", pady=(0, 10))
         ttk.Label(output_frame, text="Results:").pack(anchor="w")
@@ -252,7 +263,7 @@ class ExcelSearchApp:
 
 def main():
     root = tk.Tk()
-    app = ExcelSearchApp(root)
+    app = ExcelDataPullApp(root)
     root.mainloop()
 
 
