@@ -34,6 +34,40 @@ import xlwings as xw
 from tkinter import ttk, messagebox
 from licensing_system import LicenseManager
 from utilities.line_processing_params import LineProcessingParams
+from progress_window import ProgressWindow
+from optimized_image_canvas import OptimizedImageCanvas
+from splash_screen import SplashScreen
+
+class CaptureBox:
+    def __init__(self, box_type, coordinates, data=None):
+        self.box_type = box_type  # 'instrument_group', 'service_in', etc
+        self.coordinates = coordinates  # (x1,y1,x2,y2)
+        self.data = data  # Associated data (instrument data from return_inst_data, text, etc)
+        self.visual_elements = None  # Canvas elements (boxes, text) - will be recreated on page load
+
+class CaptureGroup:
+    def __init__(self):
+        self.boxes = []  # List of CaptureBox objects
+        self.pid = None
+        self.line = None
+        self.service_in = None
+        self.service_out = None
+        self.equipment = None
+        self.comment = None
+        self.file = None
+
+    def add_box(self, box):
+        self.boxes.append(box)
+
+    def clear(self):
+        self.boxes = []
+        self.pid = None
+        self.line = None
+        self.service_in = None
+        self.service_out = None
+        self.equipment = None
+        self.comment = None
+        self.file = None
 
 class PIDVisionApp:
 
@@ -45,6 +79,9 @@ class PIDVisionApp:
 
         # Initialize license manager
         self.license_manager = LicenseManager()
+
+        # Track boxes that have been saved to page_data
+        self.saved_boxes = set()
 
         # Check license before showing splash screen
         is_licensed, license_status = self.license_manager.check_license()
@@ -360,6 +397,8 @@ class PIDVisionApp:
         self.wb = None
         self.sheet = None
         self.capture_mode = 'pid'
+        self.page_data = {}  # Dictionary to store CaptureGroup objects for each page
+        self.current_capture_group = CaptureGroup()  # Current working capture group
         self.capture_actions = {
             'pid': self.capture_pid,
             'instruments': self.capture_instruments,
@@ -370,7 +409,9 @@ class PIDVisionApp:
             'comment': self.capture_comment
         }
         self.whole_page_ocr_results = None
-        self.reader = easyocr.Reader(['en'])
+        # Initialize EasyOCR reader here
+        print("Initializing EasyOCR reader...")
+        self.reader = easyocr.Reader(['en'], gpu=True)
         self.reader_stride = 550
         self.reader_sub_img_size = 600
         self.pred_square_size = 1300
@@ -422,9 +463,48 @@ class PIDVisionApp:
         self.canvas.bind('<MouseWheel>', self.wheel)  # with Windows and MacOS, but not Linux
         self.canvas.bind('<Button-5>', self.wheel)  # only with Linux, wheel scroll down
         self.canvas.bind('<Button-4>', self.wheel)  # only with Linux, wheel scroll up
-        self.canvas.bind('<ButtonPress-1>', self.start_crop)
+        self.canvas.bind('<ButtonPress-1>', self.handle_left_click)
         self.canvas.bind('<B1-Motion>', self.update_crop)
         self.canvas.bind('<ButtonRelease-1>', self.end_crop)
+
+    def handle_left_click(self, event):
+        """Handle left click events - either start crop or select group"""
+        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        
+        # First check if click is inside any existing group box
+        if self.image_path in self.page_data:
+            # Convert click coordinates to image coordinates
+            img_x, img_y = self.canvas_to_image(x, y)
+            
+            for capture_group in self.page_data[self.image_path]:
+                for box in capture_group.boxes:
+                    if box.box_type == 'instrument_group':
+                        x1, y1, x2, y2 = box.coordinates
+                        if x1 <= img_x <= x2 and y1 <= img_y <= y2:
+                            # Click is inside this group box, display its data
+                            self.display_group_data(capture_group, box)
+                            return
+        
+        # If no group was clicked, proceed with normal crop behavior
+        self.start_crop(event)
+        
+    def display_group_data(self, capture_group, box):
+        """Display data for the selected capture group"""
+        # Update current data with group data
+        self.pid = capture_group.pid
+        self.line = capture_group.line
+        self.service_in = capture_group.service_in
+        self.service_out = capture_group.service_out
+        self.equipment = capture_group.equipment
+        self.comment = capture_group.comment
+        
+        # Collect instrument data from ALL boxes in the group
+        self.inst_data = []
+        for box in capture_group.boxes:
+            if box.box_type == 'instrument_group' and box.data:
+                self.inst_data.extend(box.data.copy())
+
+        self.update_data_display()
 
     def bind_key_shortcuts(self):
         # Bind key shortcuts to the respective commands
@@ -441,9 +521,10 @@ class PIDVisionApp:
         self.root.bind('v', lambda event: self.vote())
         self.root.bind('s', lambda event: self.swap_services())
         self.root.bind('g', lambda event: self.set_capture('comment'))
+        self.root.bind('t', lambda event: self.save_current_group())
         self.root.bind('<Return>', lambda event: self.set_comment())
 
-        # Bind key shortcuts to the respective commands
+        # Bind key shortcuts to the respective commands (uppercase)
         self.root.bind('N', lambda event: self.next_image())
         self.root.bind('B', lambda event: self.previous_image())
         self.root.bind('P', lambda event: self.set_capture('pid'))
@@ -457,6 +538,7 @@ class PIDVisionApp:
         self.root.bind('V', lambda event: self.vote())
         self.root.bind('S', lambda event: self.swap_services())
         self.root.bind('G', lambda event: self.set_capture('comment'))
+        self.root.bind('T', lambda event: self.save_current_group())
 
         # Initialize shift key binding
         self.shift_held = False
@@ -599,7 +681,11 @@ class PIDVisionApp:
             # Center the image
             self.center_image()
 
+            # Create capture text
             self.create_capture_text()
+
+            # Recreate boxes from page data if they exist
+            self.recreate_boxes()
 
     def center_image(self):
         # Get the current window size
@@ -968,8 +1054,13 @@ class PIDVisionApp:
         x1, y1, x2, y2 = [float(coord) for coord in box]
 
         # Convert image coordinates to canvas coordinates
-        canvas_x1, canvas_y1 = self.canvas_coords_from_image(x1 + self.cropped_x1, y1 + self.cropped_y1)
-        canvas_x2, canvas_y2 = self.canvas_coords_from_image(x2 + self.cropped_x1, y2 + self.cropped_y1)
+        # If the box coordinates already include the offset (from saved data), don't add it again
+        if hasattr(self, 'recreating_boxes') and self.recreating_boxes:
+            canvas_x1, canvas_y1 = self.canvas_coords_from_image(x1, y1)
+            canvas_x2, canvas_y2 = self.canvas_coords_from_image(x2, y2)
+        else:
+            canvas_x1, canvas_y1 = self.canvas_coords_from_image(x1 + self.cropped_x1, y1 + self.cropped_y1)
+            canvas_x2, canvas_y2 = self.canvas_coords_from_image(x2 + self.cropped_x1, y2 + self.cropped_y1)
 
         # Create rectangle on canvas
         return self.canvas.create_rectangle(
@@ -979,6 +1070,11 @@ class PIDVisionApp:
         )
 
     def capture_instruments(self, cropped_image):
+        # Lazy load model
+        if not hasattr(self, 'model_inst') or self.model_inst is None:
+            print("Loading object detection model...")
+            self.model_inst = Model.load(self.model_inst_path, self.detection_labels)
+        
         offset = (self.cropped_x1, self.cropped_y1)
         labels, boxes, scores = model_predict_on_mosaic(
             cropped_image,
@@ -1683,11 +1779,24 @@ class PIDVisionApp:
         self.update_data_display()
 
     def clear_instrument_group(self):
-
+        # Only clear boxes that haven't been saved (not in saved_boxes)
         if self.inst_data:
-            for box in self.persistent_boxes[-self.active_inst_box_count:]:
-                self.canvas.delete(box)  # Remove the previous box
+            # Get the boxes from the last capture (active boxes)
+            active_boxes = self.persistent_boxes[-self.active_inst_box_count:]
+            
+            # Only remove boxes that haven't been saved
+            boxes_to_remove = [box for box in active_boxes if box not in self.saved_boxes]
+            
+            # Delete unsaved boxes from canvas
+            for box in boxes_to_remove:
+                self.canvas.delete(box)
+                
+            # Remove deleted boxes from persistent_boxes list
+            self.persistent_boxes = [box for box in self.persistent_boxes if box not in boxes_to_remove]
+                
+        # Clear current instrument data and reset active box count
         self.inst_data = []
+        self.active_inst_box_count = 0
         self.update_data_display()
 
     # endregion
@@ -1747,7 +1856,6 @@ class PIDVisionApp:
             self.canvas.itemconfig(visual_elements['text'], state='normal')
 
     def process_visual_elements(self, labels, boxes, scores, offset):
-
         visual_elements_list = []
         active_boxes = []
 
@@ -1769,11 +1877,17 @@ class PIDVisionApp:
             detection_box = self.draw_detection_box(box, color)
             active_boxes.append(detection_box)
 
-            # Create text label
-            x1, y1 = self.canvas_coords_from_image(
-                float(box[0]) + offset[0],
-                float(box[1]) + offset[1]
-            )
+            # Create text label - handle offset differently for recreation
+            if hasattr(self, 'recreating_boxes') and self.recreating_boxes:
+                x1, y1 = self.canvas_coords_from_image(
+                    float(box[0]),
+                    float(box[1])
+                )
+            else:
+                x1, y1 = self.canvas_coords_from_image(
+                    float(box[0]) + offset[0],
+                    float(box[1]) + offset[1]
+                )
 
             text_id = self.canvas.create_text(
                 x1, y1 - 5,  # Position above the box
@@ -2402,125 +2516,169 @@ class PIDVisionApp:
 
     # endregion
 
-class ProgressWindow:
-    def __init__(self, parent, total_pages):
-        self.window = tk.Toplevel(parent)
-        self.window.title("Processing Pages")
-        self.window.transient(parent)
-        self.window.grab_set()
+    def save_current_group(self):
+        """Save the current capture group to page_data"""
+        # Get current data from window
+        self.get_data_from_window()
+        
+        # Update current capture group with window data
+        self.current_capture_group.pid = self.pid
+        self.current_capture_group.line = self.line
+        self.current_capture_group.service_in = self.service_in
+        self.current_capture_group.service_out = self.service_out
+        self.current_capture_group.equipment = self.equipment
+        self.current_capture_group.comment = self.comment
+        self.current_capture_group.file = self.image_path
 
-        # Center the window
-        window_width = 300
-        window_height = 150
-        screen_width = parent.winfo_screenwidth()
-        screen_height = parent.winfo_screenheight()
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        self.window.geometry(f'{window_width}x{window_height}+{x}+{y}')
+        # Create CaptureBox for each instrument group
+        if self.inst_data:
+            # Get all orange boxes from persistent_boxes that are rectangles with orange outline
+            # and haven't been saved before
+            orange_boxes = []
+            for box_id in self.persistent_boxes:
+                if box_id not in self.saved_boxes and self.canvas.type(box_id) == "rectangle":
+                    outline_color = self.canvas.itemcget(box_id, "outline")
+                    if outline_color == "orange":
+                        bbox = self.canvas.bbox(box_id)
+                        if bbox:
+                            # Convert canvas coordinates back to image coordinates
+                            x1, y1 = self.canvas_to_image(bbox[0], bbox[1])
+                            x2, y2 = self.canvas_to_image(bbox[2], bbox[3])
+                            orange_boxes.append((box_id, (x1, y1, x2, y2)))
+            
+            # Create a CaptureBox for each new orange box
+            for box_id, group_coords in orange_boxes:
+                # Find instrument data associated with this box
+                box_inst_data = []
+                for inst in self.inst_data:
+                    # Check if the instrument's visual elements are not in saved boxes
+                    if ('visual_elements' in inst and 
+                        inst['visual_elements']['box'] not in self.saved_boxes):
+                        box_inst_data.append(inst.copy())
+                
+                box = CaptureBox(
+                    'instrument_group',
+                    group_coords,
+                    box_inst_data
+                )
+                self.current_capture_group.add_box(box)
+                
+                # Mark this box and its associated visual elements as saved
+                self.saved_boxes.add(box_id)
+                # Change only the outline to green to indicate it's saved
+                self.canvas.itemconfig(box_id, outline='#90EE90')
+                
+                for inst in box_inst_data:
+                    if 'visual_elements' in inst:
+                        self.saved_boxes.add(inst['visual_elements']['box'])
+                        self.saved_boxes.add(inst['visual_elements']['text'])
 
-        # Progress label
-        self.label = ttk.Label(self.window, text="Processing page: 0/" + str(total_pages))
-        self.label.pack(pady=10)
+        # Initialize list for this page if it doesn't exist
+        if self.image_path not in self.page_data:
+            self.page_data[self.image_path] = []
+            
+        # Only append if we have new boxes
+        if self.current_capture_group.boxes:
+            self.page_data[self.image_path].append(self.current_capture_group)
+            
+            # Keep the boxes visible but mark them as saved with green outline only
+            for box in self.persistent_boxes[-self.active_inst_box_count:]:
+                if self.canvas.type(box) == "rectangle":
+                    self.canvas.itemconfig(box, outline='#90EE90')
+            
+            # Create new capture group for next captures
+            self.current_capture_group = CaptureGroup()
+            
+            # Clear current data but keep the boxes visible
+            self.inst_data = []
+            self.active_inst_box_count = 0
+            
+            # Update display
+            self.update_data_display()
+            
+            print(f"Saved new capture group for {self.image_path}")
+        else:
+            print("No new boxes to save")
 
-        # Progress bar
-        self.progress = ttk.Progressbar(self.window, length=200, mode='determinate', maximum=total_pages)
-        self.progress.pack(pady=10)
-
-        # Cancel button
-        self.cancelled = False
-        self.cancel_button = ttk.Button(self.window, text="Cancel", command=self.cancel)
-        self.cancel_button.pack(pady=10)
-
-        # Prevent window from being closed with X button
-        self.window.protocol("WM_DELETE_WINDOW", lambda: None)
-
-    def update(self, current_page):
-        self.label.config(text=f"Processing page: {current_page}/{self.progress['maximum']}")
-        self.progress['value'] = current_page
-        self.window.update()
-
-    def cancel(self):
-        self.cancelled = True
-        self.cancel_button.config(state='disabled')
-        self.label.config(text="Cancelling...")
-
-    def destroy(self):
-        self.window.destroy()
-
-class OptimizedImageCanvas:
-    def __init__(self, canvas):
-        self.canvas = canvas
-        self.image_cache = {}  # Cache for storing downsampled images
-        self.max_cache_size = 5  # Maximum number of cached images
-        self.current_scale = 1.0
-        self.min_scale_for_full_res = 0.5  # Minimum scale at which to show full resolution
-
-    def clear_cache(self):
-        """Clear the image cache"""
-        self.image_cache.clear()
-
-    def get_downsampled_image(self, original_image, target_scale):
-        """Get a downsampled version of the image appropriate for the current zoom level"""
-        if target_scale >= self.min_scale_for_full_res:
-            return original_image
-
-        # Round scale to nearest 0.1 to prevent too many cached versions
-        cache_scale = round(target_scale * 10) / 10
-
-        if cache_scale in self.image_cache:
-            return self.image_cache[cache_scale]
-
-        # Calculate new dimensions
-        new_width = int(original_image.width * cache_scale)
-        new_height = int(original_image.height * cache_scale)
-
-        # Create downsampled version
-        downsampled = original_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-        # Manage cache size
-        if len(self.image_cache) >= self.max_cache_size:
-            oldest_scale = list(self.image_cache.keys())[0]
-            del self.image_cache[oldest_scale]
-
-        self.image_cache[cache_scale] = downsampled
-        return downsampled
-
-    def show_image(self, original_image, imscale, bbox1, bbox2):
-        """Show image on the Canvas with dynamic downsampling"""
-        bbox = [min(bbox1[0], bbox2[0]), min(bbox1[1], bbox2[1]),
-                max(bbox1[2], bbox2[2]), max(bbox1[3], bbox2[3])]
-
-        # Get visible area coordinates
-        x1 = max(bbox2[0] - bbox1[0], 0)
-        y1 = max(bbox2[1] - bbox1[1], 0)
-        x2 = min(bbox2[2], bbox1[2]) - bbox1[0]
-        y2 = min(bbox2[3], bbox1[3]) - bbox1[1]
-
-        if int(x2 - x1) > 0 and int(y2 - y1) > 0:
-            # Get appropriate image based on scale
-            display_image = self.get_downsampled_image(original_image, imscale)
-
-            # Calculate source coordinates in the downsampled image
-            scale_factor = display_image.width / original_image.width
-            src_x1 = int(x1 / imscale * scale_factor)
-            src_y1 = int(y1 / imscale * scale_factor)
-            src_x2 = min(int(x2 / imscale * scale_factor), display_image.width)
-            src_y2 = min(int(y2 / imscale * scale_factor), display_image.height)
-
-            # Crop and resize the region
-            image = display_image.crop((src_x1, src_y1, src_x2, src_y2))
-            image = image.resize((int(x2 - x1), int(y2 - y1)), Image.Resampling.NEAREST)
-
-            # Convert to PhotoImage and display
-            imagetk = ImageTk.PhotoImage(image)
-            imageid = self.canvas.create_image(
-                max(bbox2[0], bbox1[0]),
-                max(bbox2[1], bbox1[1]),
-                anchor='nw',
-                image=imagetk
-            )
-            self.canvas.lower(imageid)
-            self.canvas.imagetk = imagetk
+    def recreate_boxes(self):
+        """Recreate visual elements for all capture groups on a page"""
+        if self.image_path not in self.page_data:
+            return
+            
+        capture_groups = self.page_data[self.image_path]
+        
+        # Clear existing boxes and tracking sets
+        self.clear_boxes()
+        self.inst_data = []
+        self.saved_boxes.clear()
+        
+        # Set flag for box recreation
+        self.recreating_boxes = True
+        
+        try:
+            # Recreate boxes for each capture group
+            for capture_group in capture_groups:
+                # Restore page data from the last capture group (most recent)
+                self.pid = capture_group.pid
+                self.line = capture_group.line
+                self.service_in = capture_group.service_in
+                self.service_out = capture_group.service_out
+                self.equipment = capture_group.equipment
+                self.comment = capture_group.comment
+                
+                # Recreate boxes for each capture in the group
+                for box in capture_group.boxes:
+                    if box.box_type == 'instrument_group':
+                        # Set crop coordinates for visual element creation
+                        self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2 = box.coordinates
+                        
+                        # Create the orange group box with green outline to indicate it's saved
+                        x1, y1 = self.canvas_coords_from_image(self.cropped_x1, self.cropped_y1)
+                        x2, y2 = self.canvas_coords_from_image(self.cropped_x2, self.cropped_y2)
+                        orange_box = self.canvas.create_rectangle(
+                            x1, y1, x2, y2,
+                            outline='#90EE90',  # Light green outline
+                            fill='#90EE90',     # Light green fill
+                            stipple='gray12'    # Keep stipple pattern
+                        )
+                        self.persistent_boxes.append(orange_box)
+                        self.saved_boxes.add(orange_box)  # Track this box as saved
+                        
+                        # Extend instrument data
+                        self.inst_data.extend(box.data)
+                        
+                        # Get labels, boxes, scores from instrument data
+                        labels = []
+                        boxes = []
+                        scores = []
+                        for inst in box.data:
+                            if 'label' in inst and 'box' in inst and 'score' in inst:
+                                labels.append(inst['label'])
+                                boxes.append(inst['box'])
+                                scores.append(inst['score'])
+                        
+                        if labels and boxes and scores:
+                            # Process visual elements
+                            visual_elements_list, new_active_boxes = self.process_visual_elements(
+                                labels, boxes, scores, (self.cropped_x1, self.cropped_y1)
+                            )
+                            
+                            # Update persistent boxes and box count
+                            self.persistent_boxes.extend(new_active_boxes)
+                            self.active_inst_box_count += len(new_active_boxes)
+                            
+                            # Add new boxes to saved set
+                            self.saved_boxes.update(new_active_boxes)
+                            
+                            # Update visual elements in instrument data
+                            for inst_data, visual_elements in zip(box.data[-len(visual_elements_list):], visual_elements_list):
+                                inst_data['visual_elements'] = visual_elements
+        finally:
+            # Always clear the flag when done
+            self.recreating_boxes = False
+        
+        # Update display
+        self.update_data_display()
 
 def set_window_logo(window, png_path, size=(64, 64)):
     """
@@ -2548,71 +2706,6 @@ def set_window_logo(window, png_path, size=(64, 64)):
 
     except Exception as e:
         print(f"Error setting icon: {e}")
-
-class SplashScreen:
-    def __init__(self, parent, image_path):
-        self.parent = parent
-
-        # Create a toplevel window
-        self.splash = tk.Toplevel(parent)
-        self.splash.overrideredirect(True)  # Remove window decorations
-
-        # Configure the window to handle transparency
-        self.splash.attributes('-alpha', 1.0)  # Make the window fully opaque
-        self.splash.wm_attributes('-transparentcolor', 'black')  # Set transparent color
-
-        # Load the image preserving transparency
-        image = Image.open(image_path)
-        # Convert to RGBA if it isn't already
-        if image.mode != 'RGBA':
-            image = image.convert('RGBA')
-
-        splash_width, splash_height = image.size
-
-        # Create a fully transparent background
-        background = Image.new('RGBA', image.size, (0, 0, 0, 0))
-        # Composite the image onto the transparent background
-        background.paste(image, (0, 0), image)
-
-        # Resize if needed
-        background = background.resize((splash_width, splash_height), Image.Resampling.LANCZOS)
-        self.photo = ImageTk.PhotoImage(background)
-
-        # Create and pack the image label with transparent background
-        self.label = tk.Label(self.splash, image=self.photo, border=0, bg='black')
-        self.label.pack()
-
-        # Add a loading label with transparent background
-        self.loading_label = tk.Label(
-            self.splash,
-            text="Loading...",
-            font=("Arial", 12),
-            bg='black',  # Match the transparent color
-            fg='white'  # Make text visible
-        )
-        self.loading_label.pack(pady=10)
-
-        # Configure the splash window background
-        self.splash.configure(bg='black')  # Match the transparent color
-
-        # Center the splash screen
-        screen_width = parent.winfo_screenwidth()
-        screen_height = parent.winfo_screenheight()
-        x = (screen_width - splash_width) // 2
-        y = (screen_height - splash_height) // 2
-        self.splash.geometry(f'{splash_width}x{splash_height}+{x}+{y}')
-
-        # Ensure splash screen is on top
-        self.splash.lift()
-        self.splash.focus_force()
-
-    def update_status(self, text):
-        """Update the loading text"""
-        self.loading_label.config(text=text)
-
-    def destroy(self):
-        """Destroy the splash screen"""
-        self.splash.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()

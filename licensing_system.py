@@ -7,11 +7,12 @@ import uuid
 import base64
 from cryptography.fernet import Fernet
 import winreg
+import requests
 
 
 class LicenseManager:
     def __init__(self):
-        self.secret_key = b'YOUR_SECRET_KEY_HERE'  # Replace with your secret key
+        self.secret_key = b'YOUR_SECRET_KEY_HERE'  # Needs to be set properly
         self.trial_days = 30
         self.cipher_suite = Fernet(base64.b64encode(hashlib.sha256(self.secret_key).digest()))
         self.current_version = "1.0.0"
@@ -102,12 +103,30 @@ class LicenseManager:
             return True, "License activated successfully"
         return False, "Invalid license key"
 
+    def _verify_with_firebase(self, license_key):
+        """Verify license key with Firebase"""
+        try:
+            response = requests.post(
+                'https://pidvision.com/verifyLicense',
+                json={'licenseKey': license_key}
+            )
+            return response.json().get('isValid', False)
+        except Exception as e:
+            print(f"Firebase verification failed: {str(e)}")
+            return False
+
     def validate_license(self, license_key):
         """Validate a license key"""
         try:
+            # Local validation
             decoded_key = base64.urlsafe_b64decode(license_key)
             decrypted_data = self.cipher_suite.decrypt(decoded_key)
             license_data = json.loads(decrypted_data)
+            
+            # Add Firebase verification
+            if not self._verify_with_firebase(license_key):
+                return False, None
+            
             return True, license_data
         except:
             return False, None
