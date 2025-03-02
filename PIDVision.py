@@ -5,11 +5,12 @@ print(f"PyTorch version: {torch.__version__}")
 print(f"CUDA available: {torch.cuda.is_available()}")
 if torch.cuda.is_available():
     print(f"CUDA device: {torch.cuda.get_device_name(0)}")
+from functions import *
+
 from console_redirect import *
 from detecto.core import Model
 from detecto_gui.detecto_gui import ObjectDetectionApp
 from utilities.find_an_instrument import FindAnInstrumentApp
-from functions import *
 from utilities.group_manager import GroupManager
 from utilities.image_editor import ImageEditor
 from utilities.minscore_edit import SliderApp
@@ -37,6 +38,10 @@ from utilities.line_processing_params import LineProcessingParams
 from progress_window import ProgressWindow
 from optimized_image_canvas import OptimizedImageCanvas
 from splash_screen import SplashScreen
+import pickle
+import datetime
+from text_corrections import TextCorrections, TextCorrectionsEditor
+from config import Config
 
 class CaptureBox:
     def __init__(self, box_type, coordinates, data=None):
@@ -83,20 +88,27 @@ class PIDVisionApp:
         # Track boxes that have been saved to page_data
         self.saved_boxes = set()
 
+        '''
         # Check license before showing splash screen
         is_licensed, license_status = self.license_manager.check_license()
         if not is_licensed:
-            tk.messagebox.showerror("License Error",
-                                    "Your trial period has expired. Please purchase a license to continue using PIDVision.")
-            root.destroy()
-            return
-
-
+            # Instead of immediately shutting down, offer chance to enter a license key
+            if self.prompt_for_license_key():
+                # License was successfully activated, continue initialization
+                pass
+            else:
+                # User cancelled or failed to enter valid license
+                root.destroy()
+                return
+        '''
         # Hide the main window initially
         self.root.withdraw()
         # Create and show splash screen
 
         self.splash = SplashScreen(root, r"logo-big.png")
+
+        # Initialize configuration
+        self.config = Config()
 
         # Start initialization in a separate thread
         init_thread = threading.Thread(target=self.initialize_app)
@@ -105,8 +117,96 @@ class PIDVisionApp:
         # Check if initialization is complete
         self.check_initialization(init_thread)
 
-    def initialize_app(self):
+        # Add tracking for annotations and their visibility state
+        self.annotations = []
+        self.annotations_visible = self.config.annotations_visible
 
+        # Initialize text corrections
+        self.text_corrections = TextCorrections(self.folder_path if hasattr(self, 'folder_path') else '')
+
+    def prompt_for_license_key(self):
+        """
+        Display a dialog to input license key when trial has expired.
+        Returns True if a valid license was activated, False otherwise.
+        """
+        # Create a custom dialog with better formatting
+        activation_dialog = tk.Toplevel(self.root)
+        activation_dialog.title("License Expired")
+        activation_dialog.geometry("500x250")
+        activation_dialog.resizable(False, False)
+        
+        # Make it modal
+        activation_dialog.transient(self.root)
+        activation_dialog.grab_set()
+        
+        # Add instructions
+        tk.Label(activation_dialog, 
+                 text="Your trial period has expired.",
+                 font=("Arial", 12, "bold")).pack(pady=(15, 5))
+        
+        tk.Label(activation_dialog, 
+                 text="Please enter your license key to continue using PIDVision:",
+                 font=("Arial", 11)).pack(pady=(5, 10))
+        
+        # Add entry field with more space
+        license_entry = tk.Entry(activation_dialog, width=50)
+        license_entry.pack(pady=10, padx=20)
+        license_entry.focus_set()  # Set focus to the entry field
+        
+        # Add status label for feedback
+        status_label = tk.Label(activation_dialog, text="", fg="red")
+        status_label.pack(pady=5)
+        
+        # Result variable to return from function
+        result = [False]
+        
+        def do_activate():
+            license_key = license_entry.get().strip()
+            if license_key:
+                success, message = self.license_manager.activate_license(license_key)
+                if success:
+                    result[0] = True
+                    activation_dialog.destroy()
+                else:
+                    status_label.config(text=message, fg="red")
+            else:
+                status_label.config(text="Please enter a license key", fg="red")
+        
+        # Add buttons for activation and cancel
+        button_frame = tk.Frame(activation_dialog)
+        button_frame.pack(pady=15)
+        
+        tk.Button(button_frame, text="Activate", command=do_activate, width=10).pack(side=tk.LEFT, padx=10)
+        tk.Button(button_frame, text="Exit", command=activation_dialog.destroy, width=10).pack(side=tk.LEFT, padx=10)
+        
+        # Add info about purchase
+        purchase_label = tk.Label(
+            activation_dialog, 
+            text="Don't have a license? Purchase one from our website.",
+            font=("Arial", 9), fg="blue", cursor="hand2"
+        )
+        purchase_label.pack(pady=10)
+        
+        # Add binding to open purchase page
+        purchase_label.bind("<Button-1>", lambda e: self.open_purchase_page())
+        
+        # Bind Enter key to activation
+        activation_dialog.bind("<Return>", lambda e: do_activate())
+        
+        # Center the dialog
+        activation_dialog.update_idletasks()
+        width = activation_dialog.winfo_width()
+        height = activation_dialog.winfo_height()
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        activation_dialog.geometry(f"+{x}+{y}")
+        
+        # Wait for dialog to close
+        self.root.wait_window(activation_dialog)
+        
+        return result[0]
+
+    def initialize_app(self):
         # Create menu bar
         self.create_menu_bar()
 
@@ -118,9 +218,6 @@ class PIDVisionApp:
 
         # Initialize image attributes
         self.initialize_image_attributes()
-
-        # Initialize reader settings
-        self.initialize_reader_settings()
 
         # Initialize other attributes
         self.initialize_other_attributes()
@@ -164,6 +261,9 @@ class PIDVisionApp:
         self.file_menu.add_command(label="Open Current Image", command=self.open_image_path)
         self.file_menu.add_command(label="Open Index", command=self.open_workbook)
         self.file_menu.add_command(label="Save Workbook", command=self.save_workbook)
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Save Page Data", command=self.save_page_data)
+        self.file_menu.add_command(label="Load Page Data", command=self.load_page_data)
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
 
         # View Menu
@@ -210,6 +310,7 @@ class PIDVisionApp:
         self.reports_menu.add_command(label="Compile Instrument Counts", command=self.compile_excels)
         self.reports_menu.add_command(label="Filename PID List", command=self.make_pid_page_xlsx)
         self.reports_menu.add_command(label="Get OCR Results", command=self.get_ocr)
+        self.reports_menu.add_command(label="Generate Page Data Report", command=self.generate_page_data_report)
         self.data_menu.add_cascade(label="Generate Reports", menu=self.reports_menu)
 
         self.menu_bar.add_cascade(label="Data", menu=self.data_menu)
@@ -290,7 +391,12 @@ class PIDVisionApp:
         self.license_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.license_menu.add_command(label="Activate License", command=self.activate_license)
         self.license_menu.add_command(label="Check License Status", command=self.check_license_status)
+        self.license_menu.add_command(label="Purchase License", command=self.open_purchase_page)
+
         self.menu_bar.add_cascade(label="License", menu=self.license_menu)
+        
+        # Add to settings menu
+        self.settings_menu.add_command(label="Text Corrections", command=self.open_text_corrections)
         
     def create_canvas_and_scrollbars(self):
         # Vertical and horizontal scrollbars for canvas
@@ -321,69 +427,35 @@ class PIDVisionApp:
         # Initialize image attributes
         self.image_list = []
         self.image_path = ''
-        self.current_image_index = 0
+        self.current_image_index = self.config.current_image_index
         self.original_image = None
         self.imscale = 1.0  # scale for the canvas image
         self.delta = 1.3  # zoom magnitude
         self.cv2img = None
 
     def initialize_models(self):
-        print('loading models from ', self.model_inst_path)
+        print('loading models from ', self.config.model_inst_path)
         try:
             # load instrument recognition model
-            self.load_pretrained_model(self.model_inst_path)
-
+            self.load_pretrained_model(self.config.model_inst_path)
         except Exception as e:
             print('Error', e)
             print('load model failed. you will likely have to load the model from command')
 
-    def initialize_reader_settings(self):
-        # Initialize reader settings
-        self.instrument_reader_settings = {
-            "low_text": 0.3,
-            "min_size": 10,
-            "ycenter_ths": 0.5,
-            "height_ths": 0.5,
-            "width_ths": 6.0,
-            "add_margin": -0.1,
-            "link_threshold": 0.2,
-            "text_threshold": 0.3,
-            "mag_ratio": 3.0,
-            "allowlist": '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ()',
-            "decoder": 'beamsearch',
-            "batch_size": 1
-        }
-
-        self.reader_settings = {
-            "low_text": 0.4,
-            "min_size": 10,
-            "ycenter_ths": 0.5,
-            "height_ths": 0.5,
-            "width_ths": 0.0,
-            "add_margin": 0.1,
-            "link_threshold": 0.13,
-            "text_threshold": 0.3,
-            "mag_ratio": 1.0,
-            "allowlist": '',
-            "decoder": 'beamsearch',
-            "batch_size": 1
-
-        }
-
     def initialize_other_attributes(self):
-        # Initialize other attributes
-        self.model_inst_path = "models/vortex_large.pth"
+        # Copy configuration values to instance variables for compatibility
+        self.model_inst_path = self.config.model_inst_path
         self.ocr_results = None
-        self.do_local_ocr = False
-        self.filter_ocr_threshold = 0.9
-        self.comment_box_expand = 20
+        self.do_local_ocr = self.config.do_local_ocr
+        self.filter_ocr_threshold = self.config.filter_ocr_threshold
+        self.comment_box_expand = self.config.comment_box_expand
         self.line = None
-        self.re_line = r'.*\"-[A-Z\d]{1,5}-.*'
+        self.re_line = self.config.re_line
         self.service_in = None
         self.service_out = None
         self.equipment = None
         self.pid = None
-        self.pid_coords = None
+        self.pid_coords = self.config.pid_coords
         self.comment = None
         self.persistent_boxes = []
         self.persistent_texts = []
@@ -409,84 +481,75 @@ class PIDVisionApp:
             'comment': self.capture_comment
         }
         self.whole_page_ocr_results = None
-        # Initialize EasyOCR reader here
+        
+        # Initialize EasyOCR reader
         print("Initializing EasyOCR reader...")
         self.reader = easyocr.Reader(['en'], gpu=True)
-        self.reader_stride = 550
-        self.reader_sub_img_size = 600
-        self.pred_square_size = 1300
-        self.pred_stride = 1250
-        self.detection_labels = []
-        self.tag_label_groups = {"FE FIT": ["CORIOLIS", "MAGNETIC", "PITOT", "TURBINE", "ULTRASONIC", "VORTEX"],
-                                 "PCV TCV LCV SDV AV XV HCV FCV FV PV TV LV": ["BALL", "BUTTERFLY", "DIAPHRAM", "GATE",
-                                                                               "GLOBE", "KNIFE", "PLUG", "VBALL"],
-                                 "LE LIT LT": ["GWR", "PR"], "PT PIT PI DPIT": ["SEAL"]}
-        self.group_inst = []
-        self.object_box_expand = 1.0
-        self.group_other = []
-        self.min_scores = {}
-        self.association_radius = 180
-        self.default_min_detection_score = 0.74
-        self.nms_threshold = 0.5
+        
+        # Copy more configuration values
+        self.reader_stride = self.config.reader_stride
+        self.reader_sub_img_size = self.config.reader_sub_img_size
+        self.pred_square_size = self.config.pred_square_size
+        self.pred_stride = self.config.pred_stride
+        self.detection_labels = self.config.detection_labels
+        self.tag_label_groups = self.config.tag_label_groups
+        self.group_inst = self.config.group_inst
+        self.group_other = self.config.group_other
+        self.object_box_expand = self.config.object_box_expand
+        self.min_scores = self.config.min_scores
+        self.association_radius = self.config.association_radius
+        self.default_min_detection_score = self.config.default_min_detection_score
+        self.nms_threshold = self.config.nms_threshold
         self.inst_data = []
         self.active_inst_box_count = 0
-        self.write_mode = 'xlwings'
+        self.write_mode = self.config.write_mode
         self.equipment_defined = None
         self.crop_start = None
         self.crop_end = None
         self.workbook_path = None
         self.instrument_box_mapping = {}
 
-        self.canny_params = None
-        self.hough_params = None
-        self.extension_params = None
-
-        self.paint_line_thickness = 5
-        self.line_join_threshold = 20
-        self.line_box_scale=1.5
-        self.line_img_erosion=2
-        self.line_erosion_iterations=2
-        self.line_img_binary_threshold=200
-        self.line_img_scale=1.0
-        self.simple_line_mode=True
-        self.debug_line=True
-        self.remove_significant_lines_only=True
-        self.remove_text_before=False
-        self.text_min_score=0.5
-        self.white_out_color=(255,255,255)
+        # Line detection parameters
+        self.canny_params = self.config.canny_params
+        self.hough_params = self.config.hough_params
+        self.extension_params = self.config.extension_params
+        self.paint_line_thickness = self.config.paint_line_thickness
+        self.line_join_threshold = self.config.line_join_threshold
+        self.line_box_scale = self.config.line_box_scale
+        self.line_img_erosion = self.config.line_img_erosion
+        self.line_erosion_iterations = self.config.line_erosion_iterations
+        self.line_img_binary_threshold = self.config.line_img_binary_threshold
+        self.line_img_scale = self.config.line_img_scale
+        self.simple_line_mode = self.config.simple_line_mode
+        self.debug_line = self.config.debug_line
+        self.remove_significant_lines_only = self.config.remove_significant_lines_only
+        self.remove_text_before = self.config.remove_text_before
+        self.text_min_score = self.config.text_min_score
+        self.white_out_color = self.config.white_out_color
+        
+        # Reader settings
+        self.instrument_reader_settings = self.config.instrument_reader_settings
+        self.reader_settings = self.config.reader_settings
 
     def bind_events_to_canvas(self):
         # Bind events to the canvas
         self.canvas.bind('<Configure>', self.show_image)  # canvas is resized
-        self.canvas.bind('<ButtonPress-3>', self.move_from)
-        self.canvas.bind('<B3-Motion>', self.move_to)
         self.canvas.bind('<MouseWheel>', self.wheel)  # with Windows and MacOS, but not Linux
         self.canvas.bind('<Button-5>', self.wheel)  # only with Linux, wheel scroll down
         self.canvas.bind('<Button-4>', self.wheel)  # only with Linux, wheel scroll up
         self.canvas.bind('<ButtonPress-1>', self.handle_left_click)
         self.canvas.bind('<B1-Motion>', self.update_crop)
         self.canvas.bind('<ButtonRelease-1>', self.end_crop)
+        
+        # Right click handling - combine panning and editing
+        self.canvas.bind('<ButtonPress-3>', self.handle_right_click)
+        self.canvas.bind('<B3-Motion>', self.handle_right_motion)
+        self.canvas.bind('<ButtonRelease-3>', self.handle_right_release)
+        
+        # Add instance variables to track right-click state
+        self.right_click_start = None
+        self.right_click_moved = False
 
-    def handle_left_click(self, event):
-        """Handle left click events - either start crop or select group"""
-        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
-        
-        # First check if click is inside any existing group box
-        if self.image_path in self.page_data:
-            # Convert click coordinates to image coordinates
-            img_x, img_y = self.canvas_to_image(x, y)
-            
-            for capture_group in self.page_data[self.image_path]:
-                for box in capture_group.boxes:
-                    if box.box_type == 'instrument_group':
-                        x1, y1, x2, y2 = box.coordinates
-                        if x1 <= img_x <= x2 and y1 <= img_y <= y2:
-                            # Click is inside this group box, display its data
-                            self.display_group_data(capture_group, box)
-                            return
-        
-        # If no group was clicked, proceed with normal crop behavior
-        self.start_crop(event)
         
     def display_group_data(self, capture_group, box):
         """Display data for the selected capture group"""
@@ -549,66 +612,64 @@ class PIDVisionApp:
         self.root.bind('<KeyPress-Control_L>', self.ctrl_pressed)
         self.root.bind('<KeyRelease-Control_L>', self.ctrl_released)
 
+        # Add binding for 'g' to toggle annotations
+        self.root.bind('g', lambda event: self.toggle_annotations())
+        self.root.bind('G', lambda event: self.toggle_annotations())
+
     def save_attributes(self):
-        """Save class attributes to a JSON file"""
-        attributes_to_save = [
-            'pid_coords',
-            'current_image_index',
-            'instrument_reader_settings',
-            'reader_settings',
-            'model_inst_path',
-            'detection_labels',
-            'group_inst',
-            'group_other',
-            'comment_box_expand',
-            'association_radius',
-            'min_scores',
-            'tag_label_groups',
-            're_line',
-            'do_local_ocr',
-            're_line',
-            'reader_stride',
-            'reader_sub_img_size',
-            'comment_box_expand',
-            'object_box_expand',
-            'pred_stride',
-            'pred_square_size',
-            'canny_params',
-            'hough_params',
-            'extension_params',
-            'line_box_scale',
-            'line_img_erosion',
-            'line_img_scale',
-            'line_erosion_iterations',
-            'line_img_binary_threshold',
-            'line_img_scale',
-            'simple_line_mode',
-            'debug_line',
-            'remove_significant_lines_only',
-            # Add any other attribute names you want to save here
-        ]
-
-        attributes = {attr_name: getattr(self, attr_name) for attr_name in attributes_to_save}
-
-        attributes_file = os.path.join(self.folder_path, 'attributes.json')
-        with open(attributes_file, 'w') as file:
-            json.dump(attributes, file)
+        """Save class attributes to configuration"""
+        # Update config with current values
+        self.config.current_image_index = self.current_image_index
+        self.config.pid_coords = self.pid_coords
+        self.config.model_inst_path = self.model_inst_path
+        self.config.do_local_ocr = self.do_local_ocr
+        self.config.filter_ocr_threshold = self.filter_ocr_threshold
+        self.config.comment_box_expand = self.comment_box_expand
+        self.config.re_line = self.re_line
+        self.config.reader_stride = self.reader_stride
+        self.config.reader_sub_img_size = self.reader_sub_img_size
+        self.config.pred_square_size = self.pred_square_size
+        self.config.pred_stride = self.pred_stride
+        self.config.detection_labels = self.detection_labels
+        self.config.tag_label_groups = self.tag_label_groups
+        self.config.group_inst = self.group_inst
+        self.config.group_other = self.group_other
+        self.config.object_box_expand = self.object_box_expand
+        self.config.min_scores = self.min_scores
+        self.config.association_radius = self.association_radius
+        self.config.default_min_detection_score = self.default_min_detection_score
+        self.config.nms_threshold = self.nms_threshold
+        self.config.write_mode = self.write_mode
+        self.config.canny_params = self.canny_params
+        self.config.hough_params = self.hough_params
+        self.config.extension_params = self.extension_params
+        self.config.paint_line_thickness = self.paint_line_thickness
+        self.config.line_join_threshold = self.line_join_threshold
+        self.config.line_box_scale = self.line_box_scale
+        self.config.line_img_erosion = self.line_img_erosion
+        self.config.line_erosion_iterations = self.line_erosion_iterations
+        self.config.line_img_binary_threshold = self.line_img_binary_threshold
+        self.config.line_img_scale = self.line_img_scale
+        self.config.simple_line_mode = self.simple_line_mode
+        self.config.debug_line = self.debug_line
+        self.config.remove_significant_lines_only = self.remove_significant_lines_only
+        self.config.remove_text_before = self.remove_text_before
+        self.config.text_min_score = self.text_min_score
+        self.config.white_out_color = self.white_out_color
+        self.config.instrument_reader_settings = self.instrument_reader_settings
+        self.config.reader_settings = self.reader_settings
+        self.config.annotations_visible = self.annotations_visible
+        
+        # Save to file
+        self.config.save(self.folder_path)
 
     def load_attributes(self):
-        """Load class attributes from a JSON file"""
-        attributes_file = os.path.join(self.folder_path, 'attributes.json')
-        if os.path.exists(attributes_file):
-            try:
-                with open(attributes_file, 'r') as file:
-                    attributes = json.load(file)
-                    # Automatically load attributes if they exist in the JSON file
-                    for key, value in attributes.items():
-                        if hasattr(self, key):
-                            setattr(self, key, value)
-            except json.JSONDecodeError:
-                print("Error: Invalid JSON file format.")
-        else:
-            print("Attribute file not found. Using default values.")
+        """Load class attributes from configuration"""
+        # Load from file
+        self.config.load(self.folder_path)
+        
+        # Initialize attributes from config
+        self.initialize_other_attributes()
 
     def create_capture_text(self):
         # Remove the previous capture text if it exists
@@ -790,9 +851,6 @@ class PIDVisionApp:
             self.clear_boxes()
 
     def load_project_folder(self, given_folder=None):
-
-        self.initialize_models()
-
         # Define a custom sorting key function
         def natural_sort_key(s):
             return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', s)]
@@ -803,14 +861,19 @@ class PIDVisionApp:
             self.folder_path = given_folder
 
         if self.folder_path:
+            # Initialize config with the project folder
+            self.config = Config(self.folder_path)
+            
             self.workbook_path = os.path.join(self.folder_path, 'index.xlsx')
 
             self.image_list = [os.path.join(self.folder_path, f) for f in os.listdir(self.folder_path) if
                                f.endswith(('.png', '.jpg', '.jpeg', '.gif'))]
             # Sort the collected files using the natural sort key function
             self.image_list.sort(key=natural_sort_key)
-            self.current_image_index = 0
-            self.load_attributes()
+            
+            # Initialize attributes from config
+            self.initialize_other_attributes()
+            
             if self.current_image_index:
                 self.go_to_page(self.current_image_index)
             else:
@@ -822,6 +885,9 @@ class PIDVisionApp:
                     self.set_object_scores()
                     self.categorize_labels()
                     self.set_tag_label_groups()
+
+            # Update text corrections path and load corrections
+            self.text_corrections = TextCorrections(self.folder_path)
 
     def create_images_from_pdf(self):
         # Ask for DPI value
@@ -860,7 +926,9 @@ class PIDVisionApp:
         self.canvas.scan_mark(event.x, event.y)
 
     def move_to(self, event):
-        ''' Drag (move) canvas to the new position '''
+        """Drag (move) canvas to the new position"""
+        if event.state & 0x0100:  # Right mouse button
+            self.right_click_moved = True
         self.canvas.scan_dragto(event.x, event.y, gain=1)
         self.show_image()  # redraw the image
 
@@ -959,11 +1027,49 @@ class PIDVisionApp:
                 font=('Arial', 8)
             )
 
+    def handle_left_click(self, event):
+        """Handle left click events - start crop"""
+        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        self.start_crop(event)
+        # Store original click position for checking if mouse moved
+        self.original_click_pos = (x, y)
+
     def end_crop(self, event):
         if self.crop_start:
             self.crop_end = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
+            
+            # Check if mouse has moved significantly
+            if hasattr(self, 'original_click_pos'):
+                current_pos = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
+                distance = ((current_pos[0] - self.original_click_pos[0])**2 + 
+                          (current_pos[1] - self.original_click_pos[1])**2)**0.5
+                
+                if distance < 5:  # Threshold for considering it a click vs drag
+                    # Convert click coordinates to image coordinates for group detection
+                    img_x, img_y = self.canvas_to_image(self.original_click_pos[0], self.original_click_pos[1])
+                    
+                    # Check if click is inside any existing group box
+                    if self.image_path in self.page_data:
+                        for capture_group in self.page_data[self.image_path]:
+                            for box in capture_group.boxes:
+                                if box.box_type == 'instrument_group':
+                                    x1, y1, x2, y2 = box.coordinates
+                                    if x1 <= img_x <= x2 and y1 <= img_y <= y2:
+                                        # Click is inside this group box, display its data
+                                        self.display_group_data(capture_group, box)
+                                        # Clean up
+                                        if self.crop_rectangle and self.crop_rectangle not in self.persistent_boxes:
+                                            self.canvas.delete(self.crop_rectangle)
+                                        if hasattr(self, 'dimension_text'):
+                                            self.canvas.delete(self.dimension_text)
+                                        self.crop_start = None
+                                        self.crop_end = None
+                                        return
+            
+            # If we get here, either the mouse moved or no group was clicked
             self.perform_crop()
-            self.canvas.delete(self.dimension_text)
+            if hasattr(self, 'dimension_text'):
+                self.canvas.delete(self.dimension_text)
 
     def perform_crop(self):
         if self.crop_start and self.crop_end:
@@ -1023,6 +1129,7 @@ class PIDVisionApp:
 
         # not sure if this is necessary as zip clears stuff
         self.persistent_boxes = []
+        self.annotations = []  # Clear annotations list
 
     # endregion
 
@@ -1034,7 +1141,9 @@ class PIDVisionApp:
             # Perform actions for capturing line
             result = self.reader.readtext(cropped_image, **self.reader_settings)
             if result:
-                self.pid = ' '.join([box[1] for box in result])
+                # Apply text corrections to each OCR result
+                corrected_text = [self.text_corrections.apply_corrections(box[1]) for box in result]
+                self.pid = ' '.join(corrected_text)
                 self.pid_coords = (self.cropped_x1, self.cropped_y1, self.cropped_x2, self.cropped_y2)
             else:
                 self.pid = ''
@@ -1164,7 +1273,9 @@ class PIDVisionApp:
         # Perform actions for capturing line
         result = self.reader.readtext(cropped_image, **self.reader_settings)
         if result:
-            self.comment = ' '.join([box[1] for box in result])
+            # Apply text corrections to each OCR result
+            corrected_text = [self.text_corrections.apply_corrections(box[1]) for box in result]
+            self.comment = ' '.join(corrected_text)
         else:
             self.comment = ''
 
@@ -1189,7 +1300,9 @@ class PIDVisionApp:
             setattr(self, target_attribute, '')
             return
 
-        just_text = ' '.join([box[1] for box in result])
+        # Apply text corrections to each OCR result
+        corrected_text = [self.text_corrections.apply_corrections(box[1]) for box in result]
+        just_text = ' '.join(corrected_text)
         current_value = getattr(self, target_attribute, '')  # Default to empty string if attribute doesn't exist
 
         # Process text based on modifier keys
@@ -1255,6 +1368,10 @@ class PIDVisionApp:
         page_frame = ttk.Frame(upper_frame)
         page_frame.pack(anchor='w', pady=(0, 10))
 
+        # Back button
+        back_button = ttk.Button(page_frame, text="←", width=2, command=self.previous_image)
+        back_button.pack(side=tk.LEFT, padx=(0,2))
+
         ttk.Label(page_frame, text="Page: ").pack(side=tk.LEFT)
 
         # Create page entry with validation
@@ -1264,6 +1381,10 @@ class PIDVisionApp:
         # Label for total pages
         self.total_pages_label = ttk.Label(page_frame, text=f" of {len(self.image_list)}")
         self.total_pages_label.pack(side=tk.LEFT)
+
+        # Forward button
+        forward_button = ttk.Button(page_frame, text="→", width=2, command=self.next_image)
+        forward_button.pack(side=tk.LEFT, padx=(2,0))
 
         # Bind Enter key to page navigation
         self.page_entry.bind('<Return>', self.navigate_to_page)
@@ -2494,26 +2615,120 @@ class PIDVisionApp:
 
     def open_workbook(self):
         os.startfile(self.workbook_path)
+
+    def save_page_data(self):
+        """Save the page data to a pickle file"""
+        if not self.folder_path:
+            tk.messagebox.showerror("Error", "No project folder loaded")
+            return
+            
+        try:
+            save_path = os.path.join(self.folder_path, "page_data.pkl")
+            with open(save_path, 'wb') as f:
+                pickle.dump(self.page_data, f)
+            tk.messagebox.showinfo("Success", f"Page data saved to {save_path}")
+        except Exception as e:
+            tk.messagebox.showerror("Error", f"Failed to save page data: {str(e)}")
+
+    def load_page_data(self):
+        """Load the page data from a pickle file"""
+        if not self.folder_path:
+            tk.messagebox.showerror("Error", "No project folder loaded")
+            return
+            
+        load_path = os.path.join(self.folder_path, "page_data.pkl")
+        if not os.path.exists(load_path):
+            tk.messagebox.showerror("Error", "No saved page data found")
+            return
+            
+        try:
+            with open(load_path, 'rb') as f:
+                self.page_data = pickle.load(f)
+            
+            # Recreate boxes for current page if it exists in loaded data
+            if self.image_path in self.page_data:
+                self.recreate_boxes()
+                
+            tk.messagebox.showinfo("Success", "Page data loaded successfully")
+        except Exception as e:
+            tk.messagebox.showerror("Error", f"Failed to load page data: {str(e)}")
+
     # endregion
 
     # region License Managment
 
+
     def activate_license(self):
         """Show license activation dialog"""
-        license_key = tk.simpledialog.askstring("License Activation",
-                                                "Please enter your license key:")
-        if license_key:
-            success, message = self.license_manager.activate_license(license_key)
-            if success:
-                tk.messagebox.showinfo("Success", message)
+        # Create a custom dialog with better formatting
+        activation_dialog = tk.Toplevel(self.root)
+        activation_dialog.title("License Activation")
+        activation_dialog.geometry("500x200")
+        activation_dialog.resizable(False, False)
+        
+        # Make it modal
+        activation_dialog.transient(self.root)
+        activation_dialog.grab_set()
+        
+        # Add instructions
+        tk.Label(activation_dialog, text="Enter your license key:", font=("Arial", 12)).pack(pady=(15, 5))
+        
+        # Add entry field with more space
+        license_entry = tk.Entry(activation_dialog, width=50)
+        license_entry.pack(pady=5, padx=20)
+        
+        # Add activate button
+        def do_activate():
+            license_key = license_entry.get().strip()
+            if license_key:
+                success, message = self.license_manager.activate_license(license_key)
+                if success:
+                    tk.messagebox.showinfo("Success", message)
+                    activation_dialog.destroy()
+                else:
+                    tk.messagebox.showerror("Error", message)
             else:
-                tk.messagebox.showerror("Error", message)
+                tk.messagebox.showerror("Error", "Please enter a license key")
+        
+        # Add buttons for activation and cancel
+        button_frame = tk.Frame(activation_dialog)
+        button_frame.pack(pady=15)
+        
+        tk.Button(button_frame, text="Activate", command=do_activate, width=10).pack(side=tk.LEFT, padx=10)
+        tk.Button(button_frame, text="Cancel", command=activation_dialog.destroy, width=10).pack(side=tk.LEFT, padx=10)
+        
+        # Add info about purchase
+        tk.Label(activation_dialog, text="Don't have a license? Purchase one from our website.",
+                 font=("Arial", 9), fg="blue", cursor="hand2").pack(pady=10)
+        
+        # Center the dialog on the parent window
+        activation_dialog.update_idletasks()
+        width = activation_dialog.winfo_width()
+        height = activation_dialog.winfo_height()
+        x = (self.root.winfo_width() // 2) - (width // 2) + self.root.winfo_x()
+        y = (self.root.winfo_height() // 2) - (height // 2) + self.root.winfo_y()
+        activation_dialog.geometry(f"+{x}+{y}")
+        
+        # Wait for dialog to close
+        self.root.wait_window(activation_dialog)
+
 
     def check_license_status(self):
         """Show current license status"""
         is_licensed, status = self.license_manager.check_license()
         tk.messagebox.showinfo("License Status", f"Current Status: {status}")
 
+
+    def open_purchase_page(self):
+        """Open the license purchase page in a browser"""
+        import webbrowser
+        webbrowser.open("https://pidvision.com")
+        tk.messagebox.showinfo(
+            "Purchase License", 
+            "The license purchase page has been opened in your browser.\n\n"
+            "After completing your purchase, you will receive a license key by email.\n"
+            "You can then activate your license using the 'Activate License' option."
+        )
     # endregion
 
     def save_current_group(self):
@@ -2673,12 +2888,321 @@ class PIDVisionApp:
                             # Update visual elements in instrument data
                             for inst_data, visual_elements in zip(box.data[-len(visual_elements_list):], visual_elements_list):
                                 inst_data['visual_elements'] = visual_elements
+
+                        # Add group annotation
+                        annotation = self.create_group_annotation(capture_group, x1, y1)
+                        self.persistent_boxes.append(annotation)
+                        self.saved_boxes.add(annotation)
         finally:
             # Always clear the flag when done
             self.recreating_boxes = False
         
         # Update display
         self.update_data_display()
+
+    def create_group_annotation(self, group, x1, y1):
+        """Create a text annotation showing group data"""
+        # Format the annotation text
+        annotation_lines = []
+        if group.pid:
+            annotation_lines.append(f"PID: {group.pid}")
+        if group.line:
+            annotation_lines.append(f"Line: {group.line}")
+        if group.service_in:
+            annotation_lines.append(f"Service In: {group.service_in}")
+        if group.service_out:
+            annotation_lines.append(f"Service Out: {group.service_out}")
+        if group.comment:
+            annotation_lines.append(f"Comment: {group.comment}")
+        
+        annotation_text = '\n'.join(annotation_lines)
+        
+        # Create text annotation on canvas with bold font
+        text_id = self.canvas.create_text(
+            x1, y1 - 10,  # Position above the box
+            text=annotation_text,
+            anchor='sw',
+            fill='#90CC90',
+            font=('Arial', 9, 'bold'),  # Set font to bold
+            justify='left',
+            state='hidden'  # Add this line to make annotations start hidden
+        )
+        
+        # Add to annotations list
+        self.annotations.append(text_id)
+        
+        return text_id
+
+    def handle_right_click(self, event):
+        """Handle initial right click - start both potential pan and edit"""
+        self.right_click_start = (event.x, event.y)
+        self.right_click_moved = False
+        self.canvas.scan_mark(event.x, event.y)  # Start pan
+
+    def handle_right_motion(self, event):
+        """Handle right button motion - pan the canvas"""
+        if self.right_click_start:
+            self.right_click_moved = True
+            self.canvas.scan_dragto(event.x, event.y, gain=1)
+            self.show_image()
+
+    def handle_right_release(self, event):
+        """Handle right click release - edit if no movement occurred"""
+        if not self.right_click_moved and self.right_click_start:
+            # Convert canvas coordinates to image coordinates
+            x = self.canvas.canvasx(event.x)
+            y = self.canvas.canvasy(event.y)
+            img_x, img_y = self.canvas_to_image(x, y)
+            
+            # Check if click is inside any saved group
+            if self.image_path in self.page_data:
+                for group in self.page_data[self.image_path]:
+                    for box in group.boxes:
+                        if box.box_type == 'instrument_group':
+                            x1, y1, x2, y2 = box.coordinates
+                            if x1 <= img_x <= x2 and y1 <= img_y <= y2:
+                                self.edit_group(group)
+                                break
+    
+        self.right_click_start = None
+        self.right_click_moved = False
+
+    def edit_group(self, group):
+        """Create popup window for editing group data"""
+        edit_window = tk.Toplevel(self.root)
+        edit_window.title("Edit Group")
+        edit_window.bind('<Return>', lambda e: save_changes())
+        
+        # Create and pack a frame for better layout
+        frame = ttk.Frame(edit_window, padding="10")
+        frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Create entry fields with labels
+        fields = [
+            ("PID:", group.pid),
+            ("Line:", group.line),
+            ("Service In:", group.service_in),
+            ("Service Out:", group.service_out),
+            ("Equipment:", group.equipment),
+            ("Comment:", group.comment)
+        ]
+        
+        entries = {}
+        for i, (label_text, value) in enumerate(fields):
+            ttk.Label(frame, text=label_text).grid(row=i, column=0, padx=5, pady=5, sticky=tk.W)
+            entry = ttk.Entry(frame, width=40)
+            if value:
+                entry.insert(0, value)
+            entry.grid(row=i, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+            entries[label_text] = entry
+        
+        def save_changes():
+            # Update group data
+            group.pid = entries["PID:"].get()
+            group.line = entries["Line:"].get()
+            group.service_in = entries["Service In:"].get()
+            group.service_out = entries["Service Out:"].get()
+            group.equipment = entries["Equipment:"].get()
+            group.comment = entries["Comment:"].get()
+            
+            # Update display if this is the most recent group
+            if self.page_data[self.image_path][-1] == group:
+                self.pid = group.pid
+                self.line = group.line
+                self.service_in = group.service_in
+                self.service_out = group.service_out
+                self.equipment = group.equipment
+                self.comment = group.comment
+                self.update_data_display()
+            
+            edit_window.destroy()
+        
+        def delete_group():
+            """Delete the group and its associated visual elements"""
+            if tk.messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this group?"):
+                # Remove visual elements from canvas
+                for box in group.boxes:
+                    if box.box_type == 'instrument_group':
+                        # Remove the orange/green group box
+                        x1, y1 = self.canvas_coords_from_image(box.coordinates[0], box.coordinates[1])
+                        x2, y2 = self.canvas_coords_from_image(box.coordinates[2], box.coordinates[3])
+                        overlapping = self.canvas.find_overlapping(x1, y1, x2, y2)
+                        for item_id in overlapping:
+                            if item_id in self.persistent_boxes:
+                                self.canvas.delete(item_id)
+                                self.persistent_boxes.remove(item_id)
+                                if item_id in self.saved_boxes:
+                                    self.saved_boxes.remove(item_id)
+                    
+                    # Remove associated instrument boxes and labels
+                    for inst_data in box.data:
+                        if 'visual_elements' in inst_data:
+                            box_id = inst_data['visual_elements']['box']
+                            text_id = inst_data['visual_elements']['text']
+                            self.canvas.delete(box_id)
+                            self.canvas.delete(text_id)
+                            if box_id in self.persistent_boxes:
+                                self.persistent_boxes.remove(box_id)
+                            if text_id in self.persistent_boxes:
+                                self.persistent_boxes.remove(text_id)
+                            if box_id in self.saved_boxes:
+                                self.saved_boxes.remove(box_id)
+                            if text_id in self.saved_boxes:
+                                self.saved_boxes.remove(text_id)
+
+                # Remove group from page_data
+                if self.image_path in self.page_data:
+                    self.page_data[self.image_path].remove(group)
+                    
+                    # Update display with last group's data if available
+                    if self.page_data[self.image_path]:
+                        last_group = self.page_data[self.image_path][-1]
+                        self.pid = last_group.pid
+                        self.line = last_group.line
+                        self.service_in = last_group.service_in
+                        self.service_out = last_group.service_out
+                        self.equipment = last_group.equipment
+                        self.comment = last_group.comment
+                    else:
+                        # Clear current data if no groups remain
+                        self.pid = None
+                        self.line = None
+                        self.service_in = None
+                        self.service_out = None
+                        self.equipment = None
+                        self.comment = None
+                    
+                    self.update_data_display()
+                
+                edit_window.destroy()
+        
+        # Create button frame
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=len(fields), column=0, columnspan=2, pady=10)
+        
+        ttk.Button(button_frame, text="Save", command=save_changes).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Delete", command=delete_group, style='Delete.TButton').pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=edit_window.destroy).pack(side=tk.LEFT, padx=5)
+        
+        # Create a style for the delete button
+        style = ttk.Style()
+        style.configure('Delete.TButton', foreground='red')
+        
+        # Configure grid weights
+        frame.columnconfigure(1, weight=1)
+        
+        # Make dialog modal
+        edit_window.transient(self.root)
+        edit_window.grab_set()
+        
+        # Center the window
+        edit_window.update_idletasks()
+        width = edit_window.winfo_width()
+        height = edit_window.winfo_height()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (width // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (height // 2)
+        edit_window.geometry(f'+{x}+{y}')
+
+    def generate_page_data_report(self):
+        """Generate an Excel report from the saved page data"""
+        if not self.page_data:
+            tk.messagebox.showerror("Error", "No page data available")
+            return
+
+        try:
+            # Create a new workbook
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = 'Page Data Report'
+
+            # Define headers
+            headers = ['File', 'PID', 'Line', 'Service In', 'Service Out', 'Equipment', 'Comment', 
+                      'Instrument Tag', 'Instrument Tag No', 'Instrument Type', 'Instrument Line', 'Instrument Comment']
+            for col, header in enumerate(headers, 1):
+                ws.cell(row=1, column=col, value=header)
+
+            # Current row for writing data
+            current_row = 2
+
+            # Process each page's data
+            for file_path, capture_groups in self.page_data.items():
+                for group in capture_groups:
+                    # Get base data that will be repeated for each instrument
+                    base_data = {
+                        'File': file_path,
+                        'PID': group.pid,
+                        'Line': group.line,
+                        'Service In': group.service_in,
+                        'Service Out': group.service_out,
+                        'Equipment': group.equipment,
+                        'Comment': group.comment
+                    }
+
+                    # Find instrument data in the group's boxes
+                    instruments_found = False
+                    for box in group.boxes:
+                        if box.box_type == 'instrument_group' and box.data:
+                            for inst in box.data:
+                                # Combine base data with instrument data
+                                row_data = base_data.copy()
+                                row_data.update({
+                                    'Instrument Tag': inst.get('tag', ''),
+                                    'Instrument Tag No': inst.get('tag_no', ''),
+                                    'Instrument Type': inst.get('type', ''),
+                                    'Instrument Line': inst.get('line', ''),
+                                    'Instrument Comment': inst.get('comment', '')
+                                })
+
+                                # Write row to worksheet
+                                for col, header in enumerate(headers, 1):
+                                    ws.cell(row=current_row, column=col, value=row_data.get(header, ''))
+                                current_row += 1
+                                instruments_found = True
+
+                    # If no instruments in group, write a row with just the base data
+                    if not instruments_found:
+                        for col, header in enumerate(headers, 1):
+                            ws.cell(row=current_row, column=col, value=base_data.get(header, ''))
+                        current_row += 1
+
+            # Auto-adjust column widths
+            for col in ws.columns:
+                max_length = 0
+                column = col[0].column_letter
+                for cell in col:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = (max_length + 2)
+                ws.column_dimensions[column].width = adjusted_width
+
+            # Save the workbook
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_path = os.path.join(self.folder_path, f"page_data_report_{timestamp}.xlsx")
+            wb.save(save_path)
+
+            # Ask if user wants to open the file
+            if tk.messagebox.askyesno("Success", f"Report saved to {save_path}\nWould you like to open it?"):
+                os.startfile(save_path)
+
+        except Exception as e:
+            tk.messagebox.showerror("Error", f"Failed to generate report: {str(e)}")
+
+    def toggle_annotations(self):
+        """Toggle visibility of group annotations"""
+        self.annotations_visible = not self.annotations_visible
+        self.config.annotations_visible = self.annotations_visible
+        for annotation in self.annotations:
+            if self.annotations_visible:
+                self.canvas.itemconfig(annotation, state='normal')
+            else:
+                self.canvas.itemconfig(annotation, state='hidden')
+
+    def open_text_corrections(self):
+        TextCorrectionsEditor(self.root, self.text_corrections)
+
 
 def set_window_logo(window, png_path, size=(64, 64)):
     """
@@ -2706,6 +3230,7 @@ def set_window_logo(window, png_path, size=(64, 64)):
 
     except Exception as e:
         print(f"Error setting icon: {e}")
+
 
 if __name__ == "__main__":
     root = tk.Tk()

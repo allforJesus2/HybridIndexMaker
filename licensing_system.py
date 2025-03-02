@@ -12,9 +12,18 @@ import requests
 
 class LicenseManager:
     def __init__(self):
-        self.secret_key = b'YOUR_SECRET_KEY_HERE'  # Needs to be set properly
+        # Use a proper secret key - this should match any encryption used on your server
+        self.secret_key = b'YourActualSecretKeyHere1234567890abc='  # Replace with your actual key
         self.trial_days = 30
-        self.cipher_suite = Fernet(base64.b64encode(hashlib.sha256(self.secret_key).digest()))
+        self.firebase_verification_enabled = True  # Allow toggling Firebase verification
+        
+        # Generate the cipher suite from the secret key
+        try:
+            self.cipher_suite = Fernet(base64.b64encode(hashlib.sha256(self.secret_key).digest()))
+        except Exception as e:
+            print(f"Error initializing cipher suite: {str(e)}")
+            self.cipher_suite = None
+        
         self.current_version = "1.0.0"
 
     def check_license(self):
@@ -106,29 +115,52 @@ class LicenseManager:
     def _verify_with_firebase(self, license_key):
         """Verify license key with Firebase"""
         try:
+            # Change to your actual Firebase function URL
             response = requests.post(
-                'https://pidvision.com/verifyLicense',
+                'https://us-central1-pidvision-website.cloudfunctions.net/verifyLicense',
                 json={'licenseKey': license_key}
             )
-            return response.json().get('isValid', False)
+            if response.status_code == 200:
+                return response.json().get('isValid', False)
+            else:
+                print(f"Firebase verification failed with status code: {response.status_code}")
+                return False
         except Exception as e:
             print(f"Firebase verification failed: {str(e)}")
             return False
 
     def validate_license(self, license_key):
         """Validate a license key"""
+        # First try Firebase verification (online)
+        if self.firebase_verification_enabled:
+            try:
+                is_valid = self._verify_with_firebase(license_key)
+                if is_valid:
+                    # If Firebase validates the license, try to decrypt it for local data
+                    try:
+                        decoded_key = base64.urlsafe_b64decode(license_key)
+                        decrypted_data = self.cipher_suite.decrypt(decoded_key)
+                        license_data = json.loads(decrypted_data)
+                        return True, license_data
+                    except:
+                        # Can't decrypt, but Firebase says it's valid, so create basic data
+                        return True, {"license_type": "verified_by_firebase"}
+                else:
+                    # Firebase says it's invalid
+                    return False, None
+            except Exception as e:
+                print(f"Firebase validation error: {str(e)}")
+                # Fall back to local validation if Firebase fails
+                pass
+        
+        # Local validation (offline fallback)
         try:
-            # Local validation
             decoded_key = base64.urlsafe_b64decode(license_key)
             decrypted_data = self.cipher_suite.decrypt(decoded_key)
             license_data = json.loads(decrypted_data)
-            
-            # Add Firebase verification
-            if not self._verify_with_firebase(license_key):
-                return False, None
-            
             return True, license_data
-        except:
+        except Exception as e:
+            print(f"Local license validation error: {str(e)}")
             return False, None
 
     def generate_license_key(self, user_email, license_type="standard"):

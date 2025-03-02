@@ -1,4 +1,3 @@
-
 import fitz
 from PyPDF2 import PdfMerger
 import copy
@@ -20,6 +19,7 @@ from utilities.extend_line_vertices import *
 # Standalone Functions
 
 # region Utilities
+
 
 def generate_color(string):
     # Generate a hash value for the input string using MD5
@@ -351,6 +351,28 @@ def pdf2png(pdf_file, target_width):
 
 
 # region Text Processing
+
+def process_service_data(service_in, service_out):
+    """
+    Process service in/out data to create a single service string.
+    
+    Args:
+        service_in (str): Input service
+        service_out (str): Output service
+        
+    Returns:
+        str: Formatted service string
+    """
+    si = condense_hyphen_string(service_in) if service_in else ''
+    so = condense_hyphen_string(service_out) if service_out else ''
+    
+    if si and so:
+        return f"{si} TO {so}" if si != so else f"{si} RECIRCULATION"
+    elif si:
+        return f"{si} OUTLET"
+    elif so:
+        return f"TO {so}"
+    return ''
 
 def merge_common_substrings(str1, str2):
     # Split the strings into lists of words
