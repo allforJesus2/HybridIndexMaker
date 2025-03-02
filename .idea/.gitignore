@@ -1,3 +1,9 @@
 # Default ignored files
 /shelf/
 /workspace.xml
+
+# Git Ignoring the Models Folder
+models/
+expiremental/
+old/
+temp/
