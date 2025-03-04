@@ -223,7 +223,7 @@ class PIDVisionApp:
         self.initialize_other_attributes()
 
         # Initialize instrument and equipment models
-        self.initialize_models()
+        #self.initialize_models()
 
         # Bind key shortcuts to the respective commands
         self.bind_key_shortcuts()
@@ -870,14 +870,20 @@ class PIDVisionApp:
                                f.endswith(('.png', '.jpg', '.jpeg', '.gif'))]
             # Sort the collected files using the natural sort key function
             self.image_list.sort(key=natural_sort_key)
-            
+        
             # Initialize attributes from config
             self.initialize_other_attributes()
             
+            print('self.current_image_index', self.current_image_index)
+
             if self.current_image_index:
                 self.go_to_page(self.current_image_index)
             else:
                 self.go_to_page(1)
+            # Update text corrections path and load corrections
+            self.text_corrections = TextCorrections(self.folder_path)
+
+            self.initialize_models()
 
             if not self.group_inst or not self.tag_label_groups:
                 if tk.messagebox.askyesno("Initialize Settings", "Initialize capture settings?"):
@@ -886,8 +892,7 @@ class PIDVisionApp:
                     self.categorize_labels()
                     self.set_tag_label_groups()
 
-            # Update text corrections path and load corrections
-            self.text_corrections = TextCorrections(self.folder_path)
+
 
     def create_images_from_pdf(self):
         # Ask for DPI value
@@ -1854,8 +1859,6 @@ class PIDVisionApp:
             else:
                 raise ValueError("Unsupported worksheet type")
 
-        if isinstance(worksheet, openpyxl.worksheet.worksheet.Worksheet):
-            worksheet.parent.save(self.workbook_path)
 
     def turn_boxes_blue(self):
         # Slice the list to get active items
@@ -2399,7 +2402,6 @@ class PIDVisionApp:
     def merge_pdfs(self):
         folder_that_has_pdfs = filedialog.askdirectory(title='Folder that has PDFs')
         merge_pdf(folder_that_has_pdfs)
-        self.load_project_folder(folder_that_has_pdfs)
 
     def make_pid_page_xlsx(self):
 
@@ -2508,6 +2510,8 @@ class PIDVisionApp:
         inst_count_xlsx = openpyxl.Workbook()
         ws = inst_count_xlsx.active
         ws.title = 'Instrument Count'
+
+        print('workbook, ', inst_count_xlsx)
 
         # Clear current state
         self.inst_data = []
@@ -2656,7 +2660,6 @@ class PIDVisionApp:
     # endregion
 
     # region License Managment
-
 
     def activate_license(self):
         """Show license activation dialog"""
