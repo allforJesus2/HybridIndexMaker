@@ -8,7 +8,7 @@ import time
 import threading
 
 class CropWindow(tk.Toplevel):
-    def __init__(self, parent, image_path, coords, initial_width, initial_height):
+    def __init__(self, parent, image_path, coords, initial_width, initial_height, index=None, total=None):
         super().__init__(parent)
 
         self.image_path = image_path
@@ -16,6 +16,8 @@ class CropWindow(tk.Toplevel):
         self.full_image = Image.open(image_path)
         self.initial_width = initial_width
         self.initial_height = initial_height
+        self.index = index
+        self.total = total
 
         # Calculate center of the bounding box
         self.center_x = (coords[0] + coords[2]) // 2
@@ -49,7 +51,10 @@ class CropWindow(tk.Toplevel):
 
         # Set window title
         filename = os.path.basename(image_path)
-        self.title(f"{filename} - Region at {coords}")
+        if index is not None and total is not None:
+            self.title(f"{filename} - Region at {coords} [{index+1}/{total}]")
+        else:
+            self.title(f"{filename} - Region at {coords}")
 
         # Update the image
         self.update_crop(initial_width, initial_height)
@@ -129,7 +134,6 @@ class CropWindow(tk.Toplevel):
         photo = ImageTk.PhotoImage(region)
         self.image_label.configure(image=photo)
         self.image_label.image = photo  # Keep a reference!
-# Modified show_region method for FindAnInstrumentApp class
 
 class FindAnInstrumentApp:
     def __init__(self, root, img_path=''):
@@ -143,12 +147,24 @@ class FindAnInstrumentApp:
         self.current_image = None
         self.region_windows = []
         self.region_images = []
+        self.single_iteration = False
+        
+        # Add variables for image navigation
+        self.parsed_images = []  # Will store [image_path, coords_strs] pairs
+        self.current_image_index = 0
+        
+        # Track the last opened image file
+        self.last_opened_image = None
+        self.last_opened_image_process = None
 
         # Create main frames with clear separation
         self.file_frame = tk.LabelFrame(root, text="File Management", padx=10, pady=5)
         self.input_frame = tk.LabelFrame(root, text="Input Data", padx=10, pady=5)
         self.visualization_frame = tk.LabelFrame(root, text="Visualization Options", padx=10, pady=5)
         self.region_frame = tk.LabelFrame(root, text="Region Management", padx=10, pady=5)
+        
+        # Add new frame for image navigation
+        self.image_nav_frame = tk.LabelFrame(root, text="Image Navigation", padx=10, pady=5)
 
         # === File Management Frame ===
         # Image path selection
@@ -180,6 +196,9 @@ class FindAnInstrumentApp:
                   command=self.parse_combined_input).pack(side=tk.LEFT, padx=5)
         tk.Button(parse_buttons_frame, text="Parse & Open Crop Regions",
                   command=self.parse_and_show_regions).pack(side=tk.LEFT, padx=5)
+        # Add paste button
+        tk.Button(parse_buttons_frame, text="Paste",
+                  command=self.paste_clipboard).pack(side=tk.LEFT, padx=5)
         parse_buttons_frame.pack(pady=5)
 
         # Coordinate input and labeling options
@@ -245,6 +264,24 @@ class FindAnInstrumentApp:
                   command=self.draw_indicators).pack(pady=5)
 
         options_frame.pack(fill='x')
+        
+        # === Image Navigation Frame ===
+        nav_frame = tk.Frame(self.image_nav_frame)
+        
+        # Add image navigation status label
+        self.image_nav_status = tk.StringVar()
+        self.image_nav_status.set("No images parsed")
+        tk.Label(nav_frame, textvariable=self.image_nav_status, width=30).pack(side=tk.TOP, pady=5)
+        
+        # Add navigation buttons
+        tk.Button(nav_frame, text="◀ Previous Image", 
+                  command=self.previous_image).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Button(nav_frame, text="Next Image ▶", 
+                  command=self.next_image).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Button(nav_frame, text="Process Current Image", 
+                  command=self.process_current_image).pack(side=tk.LEFT, padx=5, pady=5)
+        
+        nav_frame.pack(fill='x')
 
         # === Region Management Frame ===
         # Region size controls
@@ -267,11 +304,27 @@ class FindAnInstrumentApp:
 
         # Region control buttons
         button_frame = tk.Frame(self.region_frame)
+        
+        # Add step back and forward buttons
+        self.step_back_button = tk.Button(button_frame, text="◀ Step Back",
+                                         command=self.step_back)
+        self.step_back_button.pack(side=tk.LEFT, padx=5)
+        
+        self.step_forward_button = tk.Button(button_frame, text="Step Forward ▶",
+                                            command=self.step_forward)
+        self.step_forward_button.pack(side=tk.LEFT, padx=5)
+        
         tk.Button(button_frame, text="Show Region",
                   command=self.show_region).pack(side=tk.LEFT, padx=5)
         self.cycle_button = tk.Button(button_frame, text="Start Cycling",
                                       command=self.toggle_cycling)
         self.cycle_button.pack(side=tk.LEFT, padx=5)
+        
+        # Add a new button for single iteration cycling
+        self.single_cycle_button = tk.Button(button_frame, text="Cycle Once",
+                                            command=self.start_single_iteration)
+        self.single_cycle_button.pack(side=tk.LEFT, padx=5)
+        
         tk.Button(button_frame, text="Close All Windows",
                   command=self.close_all_windows).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Save All Windows",
@@ -282,7 +335,12 @@ class FindAnInstrumentApp:
         self.file_frame.pack(fill='x', padx=10, pady=5)
         self.input_frame.pack(fill='x', padx=10, pady=5)
         self.visualization_frame.pack(fill='x', padx=10, pady=5)
+        self.image_nav_frame.pack(fill='x', padx=10, pady=5)  # Add the new navigation frame
         self.region_frame.pack(fill='x', padx=10, pady=5)
+
+        # Add current window index for stepping
+        self.current_window_index = 0
+
     def toggle_cycling(self):
         """Toggle the cycling of windows"""
         if not self.cycling:
@@ -300,6 +358,10 @@ class FindAnInstrumentApp:
 
             self.cycling = True
             self.cycle_button.config(text="Stop Cycling")
+            
+            # Add a new attribute to track single iteration mode
+            self.single_iteration = False
+            
             self.cycle_thread = threading.Thread(target=self.cycle_windows)
             self.cycle_thread.daemon = True
             self.cycle_thread.start()
@@ -354,7 +416,7 @@ class FindAnInstrumentApp:
 
             # Process coordinates
             coords_lines = coords_text.split('\n')
-            for coords_str in coords_lines:
+            for i, coords_str in enumerate(coords_lines):
                 if coords_str.startswith('tensor'):
                     remove = ['(', ')', '[', ']', ' ', 'tensor']
                     for rm in remove:
@@ -363,8 +425,9 @@ class FindAnInstrumentApp:
                 else:
                     coords = list(map(int, coords_str.strip('[]').split(',')))
 
-                # Create a new CropWindow
-                window = CropWindow(self.root, image_path, coords, region_width, region_height)
+                # Create a new CropWindow with index information
+                window = CropWindow(self.root, image_path, coords, region_width, region_height, 
+                                   index=len(self.region_windows), total=len(coords_lines))
                 self.region_windows.append(window)
 
                 # Store the initial cropped region for saving
@@ -376,6 +439,9 @@ class FindAnInstrumentApp:
                 bottom = min(Image.open(image_path).height, top + region_height)
                 region = Image.open(image_path).crop((left, top, right, bottom))
                 self.region_images.append(region)
+
+            # Set the current window index to the first window
+            self.current_window_index = 0
 
         except Exception as e:
             print(f"Error showing region: {e}")
@@ -446,35 +512,36 @@ class FindAnInstrumentApp:
 
     def cycle_windows(self):
         """Cycle through the windows with delay"""
-        window_index = 0
         try:
             delay = float(self.cycle_delay_entry.get())
         except ValueError:
             delay = 1.0
+        
+        # Track if we've completed a full cycle
+        completed_windows = set()
 
         while self.cycling and self.region_windows:
             # Reset index if we've reached the end
-            if window_index >= len(self.region_windows):
-                window_index = 0
+            if self.current_window_index >= len(self.region_windows):
+                self.current_window_index = 0
+                
+                # If we're in single iteration mode and have seen all windows, stop cycling
+                if self.single_iteration and len(completed_windows) == len(self.region_windows):
+                    self.cycling = False
+                    # Update button text on the main thread
+                    self.root.after(0, lambda: self.cycle_button.config(text="Start Cycling"))
+                    break
 
-            # Get current window
-            window = self.region_windows[window_index]
-
-            # Check if window still exists and is valid
-            if isinstance(window, CropWindow) and window.winfo_exists():
-                try:
-                    window.lift()
-                    window.focus_force()
-                    window_index += 1
-                except Exception as e:
-                    print(f"Error cycling window: {e}")
-                    # Remove invalid window and continue
-                    self.region_windows.pop(window_index)
-                    continue
-            else:
-                # Remove destroyed or invalid windows
-                self.region_windows.pop(window_index)
-                continue
+            # Focus the window at the current index
+            self.focus_window_at_index(self.current_window_index)
+            
+            # Add window to completed set
+            if self.current_window_index < len(self.region_windows):
+                window = self.region_windows[self.current_window_index]
+                completed_windows.add(id(window))
+            
+            # Increment the index
+            self.current_window_index += 1
 
             # Stop cycling if no windows left
             if not self.region_windows:
@@ -618,8 +685,14 @@ class FindAnInstrumentApp:
                      outline=color, width=thickness)
 
     def parse_combined_input(self):
+        """Parse the combined input and store image paths and coordinates for navigation"""
         self.reset_index()
         combined_text = self.combined_entry.get("1.0", tk.END).strip()
+        
+        # Clear previous parsed data
+        self.parsed_images = []
+        self.current_image_index = 0
+        
         try:
             path_tensors = {}
             combined_texts = combined_text.split('\n')
@@ -646,23 +719,21 @@ class FindAnInstrumentApp:
                     else:
                         path_tensors[image_path] = [coords_str]
 
+            # Store parsed data for navigation
             for image_path, coords_strs in path_tensors.items():
-                self.image_path_entry.delete(0, tk.END)
-                self.image_path_entry.insert(tk.END, image_path)
-
-                # Clean and set the coordinates
-                coords_str = '\n'.join(coords_strs)
-                self.coords_text.delete("1.0", tk.END)
-                self.coords_text.insert(tk.END, coords_str)
-
-                # Draw indicators
-                self.draw_indicators()
-
-                # Update the current_index based on the number of coordinates processed
-                self.current_index += len(coords_strs)
+                self.parsed_images.append([image_path, coords_strs])
+                
+            # If we have parsed images, display the first one
+            if self.parsed_images:
+                self.current_image_index = 0
+                self.update_current_image_display()
+                messagebox.showinfo("Success", f"Parsed {len(self.parsed_images)} images. Use navigation buttons to browse and process them.")
+            else:
+                messagebox.showinfo("Info", "No valid image data found in the input.")
 
         except Exception as e:
-            print(f"Error parsing combined input: {e}")
+            messagebox.showerror("Error", f"Error parsing combined input: {str(e)}")
+
     def browse_image(self):
         self.image_path_entry.delete(0, tk.END)
         file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg;*.png")])
@@ -712,12 +783,190 @@ class FindAnInstrumentApp:
             modified_image_path = os.path.join(output_dir, filename)
 
             img.save(modified_image_path)
-            startfile(modified_image_path)
-
+            
+            # Close any previously opened image
+            self.close_last_opened_image()
+            
+            # Open the new image and store a reference to it
+            self.last_opened_image = modified_image_path
+            import subprocess
+            self.last_opened_image_process = subprocess.Popen(["start", "", modified_image_path], 
+                                                            shell=True)
 
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred: {str(e)}")
 
+    def paste_clipboard(self):
+        """Paste clipboard contents into the combined input area"""
+        try:
+            # Get clipboard content
+            clipboard_content = self.root.clipboard_get()
+            self.combined_entry.delete(1.0, tk.END)
+            # Insert at current cursor position or replace selected text
+            self.combined_entry.insert(tk.INSERT, clipboard_content)
+        except tk.TclError:
+            # This happens when clipboard is empty or contains non-text data
+            messagebox.showinfo("Clipboard Empty", "No text found in clipboard.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to paste from clipboard: {str(e)}")
+
+    def start_single_iteration(self):
+        """Start cycling through windows once and then stop"""
+        if not self.cycling:
+            if not self.region_windows:
+                messagebox.showinfo("Info", "No windows to cycle through!")
+                return
+
+            try:
+                delay = float(self.cycle_delay_entry.get())
+                if delay <= 0:
+                    raise ValueError("Delay must be positive")
+            except ValueError as e:
+                messagebox.showerror("Error", "Invalid delay value. Please enter a positive number.")
+                return
+
+            self.cycling = True
+            self.single_iteration = True  # Set single iteration mode
+            self.cycle_button.config(text="Stop Cycling")
+            
+            self.cycle_thread = threading.Thread(target=self.cycle_windows)
+            self.cycle_thread.daemon = True
+            self.cycle_thread.start()
+        else:
+            self.cycling = False
+            self.cycle_button.config(text="Start Cycling")
+
+    def step_forward(self):
+        """Step forward to the next window"""
+        if not self.region_windows:
+            messagebox.showinfo("Info", "No windows to navigate!")
+            return
+        
+        # Increment the index, wrapping around if necessary
+        self.current_window_index = (self.current_window_index + 1) % len(self.region_windows)
+        self.focus_window_at_index(self.current_window_index)
+
+    def step_back(self):
+        """Step back to the previous window"""
+        if not self.region_windows:
+            messagebox.showinfo("Info", "No windows to navigate!")
+            return
+        
+        # Decrement the index, wrapping around if necessary
+        self.current_window_index = (self.current_window_index - 1) % len(self.region_windows)
+        self.focus_window_at_index(self.current_window_index)
+
+    def focus_window_at_index(self, index):
+        """Focus the window at the given index"""
+        if 0 <= index < len(self.region_windows):
+            window = self.region_windows[index]
+            if isinstance(window, CropWindow) and window.winfo_exists():
+                try:
+                    window.lift()
+                    window.focus_force()
+                    # Update window title to show current position
+                    filename = os.path.basename(window.image_path)
+                    window.title(f"{filename} - Region at {window.coords} [{index+1}/{len(self.region_windows)}]")
+                except Exception as e:
+                    print(f"Error focusing window: {e}")
+                    # Remove invalid window
+                    self.region_windows.pop(index)
+                    # Adjust current index if needed
+                    if self.current_window_index >= len(self.region_windows):
+                        self.current_window_index = max(0, len(self.region_windows) - 1)
+            else:
+                # Remove destroyed or invalid window
+                self.region_windows.pop(index)
+                # Adjust current index if needed
+                if self.current_window_index >= len(self.region_windows):
+                    self.current_window_index = max(0, len(self.region_windows) - 1)
+
+    # Add new methods for image navigation
+    def previous_image(self):
+        """Navigate to the previous image in the parsed list"""
+        if not self.parsed_images:
+            messagebox.showinfo("Info", "No images parsed. Please parse combined input first.")
+            return
+            
+        # Close any open region windows
+        self.close_all_windows()
+        
+        # Close any previously opened image
+        self.close_last_opened_image()
+            
+        # Decrement the index, wrapping around if necessary
+        self.current_image_index = (self.current_image_index - 1) % len(self.parsed_images)
+        self.update_current_image_display()
+        
+    def next_image(self):
+        """Navigate to the next image in the parsed list"""
+        if not self.parsed_images:
+            messagebox.showinfo("Info", "No images parsed. Please parse combined input first.")
+            return
+            
+        # Close any open region windows
+        self.close_all_windows()
+        
+        # Close any previously opened image
+        self.close_last_opened_image()
+            
+        # Increment the index, wrapping around if necessary
+        self.current_image_index = (self.current_image_index + 1) % len(self.parsed_images)
+        self.update_current_image_display()
+        
+    def update_current_image_display(self):
+        """Update the UI to display the current image and its coordinates"""
+        if not self.parsed_images or self.current_image_index >= len(self.parsed_images):
+            return
+            
+        # Get current image data
+        image_path, coords_strs = self.parsed_images[self.current_image_index]
+        
+        # Update image path entry
+        self.image_path_entry.delete(0, tk.END)
+        self.image_path_entry.insert(tk.END, image_path)
+        
+        # Update coordinates text
+        self.coords_text.delete("1.0", tk.END)
+        self.coords_text.insert(tk.END, '\n'.join(coords_strs))
+        
+        # Update navigation status
+        self.image_nav_status.set(f"Image {self.current_image_index + 1} of {len(self.parsed_images)}: {os.path.basename(image_path)}")
+        
+    def process_current_image(self):
+        """Process the currently displayed image (draw indicators or show regions)"""
+        if not self.parsed_images:
+            messagebox.showinfo("Info", "No images parsed. Please parse combined input first.")
+            return
+            
+        # Close any previously opened image
+        self.close_last_opened_image()
+            
+        # Draw indicators for the current image
+        self.draw_indicators()
+
+    def close_last_opened_image(self):
+        """Close the last opened image file if it exists"""
+        if self.last_opened_image_process is not None:
+            try:
+                # Try to terminate the process
+                import subprocess
+                import platform
+                
+                if platform.system() == "Windows":
+                    # On Windows, use taskkill to close the image viewer
+                    subprocess.run(["taskkill", "/F", "/PID", str(self.last_opened_image_process.pid)], 
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    # On other platforms, try to terminate the process
+                    self.last_opened_image_process.terminate()
+                    
+                self.last_opened_image_process = None
+            except Exception as e:
+                print(f"Error closing last image: {e}")
+                
+        # Also clear the reference to the last opened image path
+        self.last_opened_image = None
 
 # Example usage
 if __name__ == "__main__":

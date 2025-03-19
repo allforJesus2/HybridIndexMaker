@@ -33,7 +33,7 @@ class Config:
         self.pid_coords = None
         
         # Model paths
-        self.model_inst_path = "models/vortex_large.pth"
+        self.model_inst_path = "models/FEB25.pth"
         
         # OCR settings
         self.do_local_ocr = False
@@ -53,11 +53,11 @@ class Config:
         # Group settings
         self.association_radius = 180
         self.tag_label_groups = {
-            "FE FIT": ["CORIOLIS", "MAGNETIC", "PITOT", "TURBINE", "ULTRASONIC", "VORTEX"],
+            "FE FIT FF": ["CORIOLIS", "MAGNETIC", "PITOT", "TURBINE", "ULTRASONIC", "VORTEX"],
             "PCV TCV LCV SDV AV XV HCV FCV FV PV TV LV": ["BALL", "BUTTERFLY", "DIAPHRAM", "GATE",
                                                           "GLOBE", "KNIFE", "PLUG", "VBALL"],
-            "LE LIT LT": ["GWR", "PR"], 
-            "PT PIT PI DPIT": ["SEAL"]
+            "LE LIT LT LF": ["GWR", "PR"], 
+            "PT PTT PIT PI DPIT": ["SEAL"]
         }
         self.group_inst = []
         self.group_other = []
@@ -67,16 +67,16 @@ class Config:
         
         # Line detection settings
         self.re_line = r'.*\"-[A-Z\d]{1,5}-.*'
-        self.paint_line_thickness = 5
+        self.paint_line_thickness = 8
         self.line_join_threshold = 20
-        self.line_box_scale = 1.5
-        self.line_img_erosion = 2
+        self.line_box_scale = 1.2
+        self.line_img_erosion = 11
         self.line_erosion_iterations = 2
         self.line_img_binary_threshold = 200
-        self.line_img_scale = 1.0
+        self.line_img_scale = 0.3
         self.simple_line_mode = True
         self.debug_line = True
-        self.remove_significant_lines_only = True
+        self.remove_significant_lines_only = False
         self.remove_text_before = False
         self.text_min_score = 0.5
         self.white_out_color = (255, 255, 255)
@@ -93,7 +93,7 @@ class Config:
             "ycenter_ths": 0.5,
             "height_ths": 0.5,
             "width_ths": 6.0,
-            "add_margin": -0.1,
+            "add_margin": -0.04,
             "link_threshold": 0.2,
             "text_threshold": 0.3,
             "mag_ratio": 3.0,

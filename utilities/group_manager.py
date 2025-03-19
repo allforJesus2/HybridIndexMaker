@@ -91,12 +91,13 @@ class GroupManager:
         button_frame.grid(row=1, column=0, columnspan=3, pady=10)
 
         # Movement buttons
+        ttk.Button(button_frame, text="To Available Labels",
+            command=self.move_to_available).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="To Capture Group",
                   command=self.move_to_capture).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="To Association Group",
                   command=self.move_to_association).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="To Available Labels",
-                  command=self.move_to_available).pack(side=tk.LEFT, padx=5)
+
 
         # Save and close button
         ttk.Button(self.main_frame, text="Save and Close",

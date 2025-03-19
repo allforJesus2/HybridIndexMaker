@@ -115,65 +115,172 @@ class LicenseManager:
     def _verify_with_firebase(self, license_key):
         """Verify license key with Firebase"""
         try:
-            # Change to your actual Firebase function URL
-            response = requests.post(
-                'https://us-central1-pidvision-website.cloudfunctions.net/verifyLicense',
-                json={'licenseKey': license_key}
-            )
+            # The endpoint for callable functions
+            url = 'https://us-central1-pidvision-website.cloudfunctions.net/verifyLicense'
+            
+            # Format the request body according to Firebase Callable Functions spec
+            headers = {
+                'Content-Type': 'application/json',
+                'Origin': 'https://pidvision-website.web.app'  # Add Origin header
+            }
+            
+            # Update the data structure to match the Cloud Function expectation
+            data = {
+                'data': {
+                    'licenseKey': license_key,
+                    'hardwareId': self._get_hardware_id()  # Add hardware ID
+                }
+            }
+            
+            # Add detailed logging
+            print(f"Sending verification request to Firebase...")
+            print(f"Request data: {data}")
+            
+            response = requests.post(url, json=data, headers=headers, timeout=10)  # Add timeout
+            
+            print(f"Firebase verification response status: {response.status_code}")
+            print(f"Firebase verification response: {response.text}")
+            
             if response.status_code == 200:
-                return response.json().get('isValid', False)
-            else:
-                print(f"Firebase verification failed with status code: {response.status_code}")
+                result = response.json()
+                # Check for error in response
+                if 'error' in result:
+                    print(f"Firebase returned error: {result['error']}")
+                    return False
+                    
+                # Firebase callable functions wrap the response in a 'result' field
+                if 'result' in result and result['result'].get('isValid', False):
+                    print("License verified successfully")
+                    return True
+                
+                print("License verification failed - invalid response format")
                 return False
-        except Exception as e:
-            print(f"Firebase verification failed: {str(e)}")
+                
+            print(f"Firebase verification failed with status {response.status_code}")
+            
+            # If we get a 500 error, fall back to local validation
+            if response.status_code == 500:
+                print("Falling back to local validation due to server error")
+                return None  # Signal to fall back to local validation
+                
             return False
+            
+        except requests.exceptions.Timeout:
+            print("Firebase verification timed out - falling back to local validation")
+            return None  # Signal to fall back to local validation
+            
+        except requests.exceptions.ConnectionError:
+            print("Firebase connection error - falling back to local validation")
+            return None  # Signal to fall back to local validation
+            
+        except Exception as e:
+            print(f"Firebase verification error: {str(e)}")
+            return None  # Signal to fall back to local validation
 
     def validate_license(self, license_key):
         """Validate a license key"""
+        if not license_key:
+            return False, None
+        
         # First try Firebase verification (online)
         if self.firebase_verification_enabled:
             try:
-                is_valid = self._verify_with_firebase(license_key)
-                if is_valid:
-                    # If Firebase validates the license, try to decrypt it for local data
-                    try:
-                        decoded_key = base64.urlsafe_b64decode(license_key)
-                        decrypted_data = self.cipher_suite.decrypt(decoded_key)
-                        license_data = json.loads(decrypted_data)
-                        return True, license_data
-                    except:
-                        # Can't decrypt, but Firebase says it's valid, so create basic data
-                        return True, {"license_type": "verified_by_firebase"}
+                print(f"Attempting Firebase verification for key: {license_key}")
+                firebase_result = self._verify_with_firebase(license_key)
+                
+                # If firebase_result is None, fall back to local validation
+                if firebase_result is None:
+                    print("Firebase verification unavailable - falling back to local validation")
+                elif firebase_result:
+                    print("Firebase verification successful")
+                    return True, {"license_type": "verified_by_firebase"}
                 else:
-                    # Firebase says it's invalid
+                    print("Firebase verification explicitly failed")
+                    # Don't fall back to local validation if Firebase explicitly fails
                     return False, None
+                    
             except Exception as e:
-                print(f"Firebase validation error: {str(e)}")
-                # Fall back to local validation if Firebase fails
+                print(f"Firebase validation error, falling back to local validation: {str(e)}")
+                # Fall back to local validation if Firebase is unreachable
                 pass
         
         # Local validation (offline fallback)
         try:
-            decoded_key = base64.urlsafe_b64decode(license_key)
-            decrypted_data = self.cipher_suite.decrypt(decoded_key)
-            license_data = json.loads(decrypted_data)
-            return True, license_data
+            # Verify the key format (32 character hex string)
+            if len(license_key) == 32 and all(c in '0123456789ABCDEF' for c in license_key.upper()):
+                print("Local validation successful")
+                return True, {"license_type": "offline_verified"}
+            print("Local validation failed - invalid key format")
+            return False, None
         except Exception as e:
             print(f"Local license validation error: {str(e)}")
             return False, None
 
-    def generate_license_key(self, user_email, license_type="standard"):
-        """Generate a license key for a user"""
-        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        license_data = {
-            "email": user_email,
-            "timestamp": timestamp,
-            "license_id": str(uuid.uuid4()),
-            "license_type": license_type,
-            "valid_from_version": self.current_version,
-            "updates_until": (datetime.datetime.now() + datetime.timedelta(days=365)).strftime("%Y-%m-%d")
-        }
+    def test_connection(self):
+        """Test connection to Firebase and general internet connectivity"""
+        print("Starting connection tests...")
+        
+        results = []
+        
+        # Test general internet connectivity first (using Google)
+        try:
+            print(f"Testing Internet Connection...")
+            response = requests.get("https://www.google.com", timeout=5)
+            results.append(("Internet Connection", response.status_code == 200))
+            print(f"Internet test response: {response.status_code}")
+        except Exception as e:
+            print(f"Internet connectivity test failed: {str(e)}")
+            results.append(("Internet Connection", False))
 
-        encrypted_data = self.cipher_suite.encrypt(json.dumps(license_data).encode())
-        return base64.urlsafe_b64encode(encrypted_data).decode()
+        # Test Firebase connection
+        try:
+            print(f"Testing Firebase Host...")
+            url = 'https://pidvision-website.web.app'
+            response = requests.get(url, timeout=5)
+            print(f"Firebase host response: {response.status_code}")
+            results.append(("Firebase Host", response.status_code == 200))
+        except Exception as e:
+            print(f"Firebase host test failed: {str(e)}")
+            results.append(("Firebase Host", False))
+
+        # Test Firebase function
+        try:
+            print(f"Testing Firebase Function...")
+            url = 'https://us-central1-pidvision-website.cloudfunctions.net/verifyLicense'
+            headers = {
+                'Content-Type': 'application/json',
+                'Origin': 'https://pidvision-website.web.app'
+            }
+            # Send a properly formatted test request
+            data = {
+                'data': {
+                    'licenseKey': 'TEST-KEY-000000'  # Only send licenseKey
+                }
+            }
+            response = requests.post(url, json=data, headers=headers, timeout=5)
+            print(f"Firebase function response: {response.status_code}")
+            print(f"Firebase function response text: {response.text}")
+            
+            # Consider any response from the server (even an error about invalid license)
+            # as a successful connection test as long as we got a response
+            is_connected = response.status_code in [200, 400, 403]  # Accept validation errors
+            results.append(("Firebase Function", is_connected))
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Firebase function test failed: {str(e)}")
+            results.append(("Firebase Function", False))
+
+        # Format detailed results
+        details = []
+        all_passed = True
+        for service, passed in results:
+            status = "✓" if passed else "✗"
+            details.append(f"{service}: {status}")
+            if not passed:
+                all_passed = False
+
+        # Print final results
+        print(f"Final results: {results}")
+        print(f"Detailed results:\n{chr(10).join(details)}")
+
+        return all_passed, "\n".join(details)

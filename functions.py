@@ -685,119 +685,6 @@ def process_line_data(img, ocr_results, re_line,
 
     return line_data
 
-def process_line_data_v2(img, ocr_results, re_line,
-                      hough_params=None,
-                      canny_params=None,
-                      extension_params=None,
-                      paint_line_thickness=5,
-                      line_join_threshold=20,
-                      line_box_scale=1.2,
-                      erosion_kernel=10,
-                      erosion_iterations=2,
-                      binary_threshold=200,
-                      line_img_scale=1.0,
-                      debug_line=True,
-                      remove_significant_lines_only=True,
-                      detecto_boxes=None,
-                      clean_img=True,
-                      simple=True,
-                      remove_text_before=False,
-                      text_min_score=0.5,
-                      white_out_color=(255,255,255)
-                      ):
-    """Process line-related data from an image and OCR results.
-
-    Returns:
-        dict: Keys are line text, values are dict containing 'image' and 'color'
-    """
-    if not ocr_results:
-        return
-
-    if simple:
-        ocr_line_txt = get_text_in_ocr_results(re_line, ocr_results)
-        return ocr_line_txt[0][1] if ocr_line_txt else ''
-
-    line_data = {}
-    if not (hough_params and canny_params and re_line):
-        return line_data
-
-    if clean_img:
-        img_cleaned = remove_objects_and_text_from_img(img, ocr_results, detecto_boxes,
-                                                       color=white_out_color, text_min_score=text_min_score)
-    else:
-        img_cleaned = img
-
-    # Original image processing code remains the same until the flood fill part
-    gray = cv2.cvtColor(img_cleaned, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, canny_params['low_threshold'], canny_params['high_threshold'],
-                      apertureSize=canny_params['aperture_size'])
-    hough_lines = cv2.HoughLinesP(edges, hough_params['rho'], hough_params['theta'],
-                            hough_params['threshold'],
-                            minLineLength=hough_params['min_line_length'],
-                            maxLineGap=hough_params['max_line_gap'])
-
-    if debug_line:
-        show_houghlines(img_cleaned, hough_lines)
-
-    # group lines whose endpoints are close
-    all_line_groups = group_lines(hough_lines, max_distance=line_join_threshold) # joins lines by endpoint to create groups
-
-    # get and scale up ocr line id text results
-    ocr_line_txt = get_text_in_ocr_results(re_line, ocr_results)
-    ocr_line_txt = scale_ocr_box_additive(ocr_line_txt, line_box_scale)
-
-    # remove all the lines and process the image so we can do a good floodfill
-    if remove_text_before:
-        img = remove_text_from_img(img, ocr_results, color=white_out_color, score_thresh=text_min_score)
-    img_line_groups_removed = white_out_line_groups(img, all_line_groups, paint_line_thickness)
-    img_lines_removed_gray = cv2.cvtColor(img_line_groups_removed, cv2.COLOR_BGR2GRAY)
-    _, thresholded_image = cv2.threshold(img_lines_removed_gray, binary_threshold, 255, cv2.THRESH_BINARY)
-    thresholded_3channel = cv2.cvtColor(thresholded_image, cv2.COLOR_GRAY2BGR)
-    kernel = np.ones((erosion_kernel, erosion_kernel), np.uint8)
-    img_line_groups_removed_eroded = cv2.erode(thresholded_3channel, kernel, iterations=erosion_iterations)
-    # Scale the image before flood fill if line_img_scale is not 1.0
-    if line_img_scale != 1.0:
-        height, width = img_line_groups_removed_eroded.shape[:2]
-        new_height = int(height * line_img_scale)
-        new_width = int(width * line_img_scale)
-        img_line_groups_removed_eroded = cv2.resize(
-            img_line_groups_removed_eroded,
-            (new_width, new_height),
-            interpolation=cv2.INTER_NEAREST
-        )
-
-    # make colors
-    line_color_data = {}
-    for box, line_text, confidence in ocr_line_txt:
-        color = generate_color(line_text)
-        line_color_data[line_text]=color
-
-    pics = []
-    for box, text, confidence in ocr_line_txt:
-
-        scaled_box = scale_box(box, line_img_scale) if line_img_scale != 1.0 else box
-
-        for line_group in all_line_groups:
-
-            scaled_line_group = scale_line_group(line_group, line_img_scale) if line_img_scale != 1.0 else line_group
-
-            # grab the color
-            color = line_color_data[text]
-
-            # Process the image with scaled components
-            processed_img = place_lines_on_image_and_flood_fill(
-                img_line_groups_removed_eroded,
-                scaled_line_group,
-                color,
-                scaled_box,
-                line_thickness=max(1, int(paint_line_thickness * line_img_scale)),
-                debug=debug_line
-            )
-
-            pics.append(processed_img)
-
-    return line_color_data, pics
-
 
 def get_lines_from_box(box, line_data, img_scale=1.0):
     lines = []
@@ -1090,7 +977,8 @@ def return_inst_data(prediction_data, img,
                      reader_sub_img_size=1300,
                      reader_stride=1250,
                      filter_ocr_threshold=0.9,
-                     line_params=None
+                     line_params=None,
+                     text_corrections=None
                      ):
     all_data = []
     group_inst = []
@@ -1148,6 +1036,15 @@ def return_inst_data(prediction_data, img,
         else:
             lines = ''
 
+        # if the line is a list we iterate over it else we just use the line make the text corrections
+        if isinstance(lines, list):
+            updated_lines = []
+            for l in lines:
+                updated_lines.append(text_corrections.apply_corrections(l))
+            lines = updated_lines
+        else:
+            lines = text_corrections.apply_corrections(lines)
+
         tag, tag_no = '', ''
         x_min, y_min, x_max, y_max = map(int, box.tolist())
         inst_center = calculate_center(box)
@@ -1166,6 +1063,11 @@ def return_inst_data(prediction_data, img,
 
                 tag = results[0][1]
                 tag_no = ' '.join([box[1] for box in results[1:]])
+                
+                # Apply text corrections if available
+                if text_corrections:
+                    tag = text_corrections.apply_corrections(tag)
+                    tag_no = text_corrections.apply_corrections(tag_no)
         except Exception as e:
             print('error in instrument OCR:', e)
             continue
@@ -1186,6 +1088,10 @@ def return_inst_data(prediction_data, img,
         if local_ocr_results:
             print('getting local ocr comment')
             comment = get_comment(local_ocr_results, box, comment_box_expand)
+            
+            # Apply text corrections to comment if available
+            if text_corrections and comment:
+                comment = text_corrections.apply_corrections(comment)
 
         data = {
             'tag': tag,

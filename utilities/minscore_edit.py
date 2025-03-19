@@ -81,8 +81,8 @@ class SliderApp:
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
-        # Add mousewheel scrolling
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        # Add mousewheel scrolling only to the canvas
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
 
         # Create sliders for each label-score pair
         for i, (label, score) in enumerate(self.labels_scores.items()):
@@ -130,7 +130,8 @@ class SliderApp:
             messagebox.showerror("Error", "Please enter a valid number")
 
     def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        if self.canvas.winfo_exists():  # Check if canvas still exists
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def update_display(self, label):
         current_value = round(self.sliders[label].get(), 2)

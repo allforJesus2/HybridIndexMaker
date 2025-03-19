@@ -11,11 +11,14 @@ from ultralytics import YOLO
 
 import tkinter as tk
 from tkinter import ttk
+import sys
+import io
 
 import os
 import shutil
 import xml.etree.ElementTree as ET
 import random
+import tempfile
 try:
     from detecto_gui.splat_images_gui import SplatImagesGUI
 except:
@@ -134,17 +137,40 @@ def create_yolov8_dataset(source_dir, output_dir, class_list, train_ratio=0.8):
 # endregion
 
 
+# Create a stdout redirector class
+class TextRedirector:
+    def __init__(self, text_widget):
+        self.text_widget = text_widget
+        self.buffer = ""
+
+    def write(self, string):
+        self.buffer += string
+        # Only update when we get a newline
+        if '\n' in self.buffer:
+            self.text_widget.insert(tk.END, self.buffer)
+            self.text_widget.see(tk.END)  # Auto-scroll to the end
+            self.buffer = ""
+        
+    def flush(self):
+        if self.buffer:
+            self.text_widget.insert(tk.END, self.buffer)
+            self.text_widget.see(tk.END)
+            self.buffer = ""
+
+
 class ObjectDetectionApp:
 
     # region Core
 
-    def __init__(self, root):
+    def __init__(self, root, model_path = None, labels=[]):
         self.root = root
         self.root.title("Object Detection App")
-        self.labels = []  # Initialize labels as an empty list
+        self.labels = labels # Initialize labels as an empty list
         self.model = None
+        self.model_path = model_path
         self.model_yolo = None
         self.use_yolo = False
+
 
         # Create a notebook (tabbed interface)
         notebook = ttk.Notebook(root)
@@ -154,10 +180,51 @@ class ObjectDetectionApp:
         model_tab = ttk.Frame(notebook)
         data_tab = ttk.Frame(notebook)
         annotations_tab = ttk.Frame(notebook)
+        console_tab = ttk.Frame(notebook)  # New console tab
 
         notebook.add(model_tab, text="Model")
         notebook.add(data_tab, text="Data")
         notebook.add(annotations_tab, text="Annotations")
+        notebook.add(console_tab, text="Console")  # Add console tab
+
+        # Add console output area
+        console_frame = ttk.Frame(console_tab)
+        console_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Add scrollbars
+        scrollbar_y = ttk.Scrollbar(console_frame)
+        scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        scrollbar_x = ttk.Scrollbar(console_frame, orient='horizontal')
+        scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Add the console text widget
+        self.console_text = tk.Text(console_frame, wrap=tk.NONE, 
+                                    yscrollcommand=scrollbar_y.set,
+                                    xscrollcommand=scrollbar_x.set,
+                                    bg='black', fg='white', font=('Consolas', 10))
+        self.console_text.pack(fill="both", expand=True)
+        
+        # Configure scrollbars
+        scrollbar_y.config(command=self.console_text.yview)
+        scrollbar_x.config(command=self.console_text.xview)
+        
+        # Add console control buttons
+        console_buttons_frame = ttk.Frame(console_tab)
+        console_buttons_frame.pack(fill="x", padx=5, pady=5)
+        
+        clear_console_button = ttk.Button(console_buttons_frame, text="Clear Console", 
+                                         command=self.clear_console)
+        clear_console_button.pack(side=tk.LEFT, padx=5)
+        
+        save_console_button = ttk.Button(console_buttons_frame, text="Save Console Output", 
+                                        command=self.save_console_output)
+        save_console_button.pack(side=tk.LEFT, padx=5)
+        
+        # Redirect stdout to the console text widget
+        self.stdout_redirector = TextRedirector(self.console_text)
+        self.original_stdout = sys.stdout
+        sys.stdout = self.stdout_redirector
 
         # Add model status display
         self.model_status_frame = ttk.LabelFrame(model_tab, text="Current Model Status")
@@ -316,6 +383,11 @@ class ObjectDetectionApp:
 
         self.load_labels_button = tk.Button(labels_buttons_frame, text="Load Labels", command=self.load_labels)
         self.load_labels_button.pack(pady=5)
+        
+        # Load the model if a model path is provided
+        if model_path:
+            self.load_pretrained_model(model_path)
+
 
     # endregion
 
@@ -327,7 +399,6 @@ class ObjectDetectionApp:
         print('use yolo:', self.use_yolo)
 
     def train_model(self):
-
         # Get the number of epochs and learning rate from the entry fields
         num_epochs = int(self.epochs_entry.get())
         learning_rate = float(self.learning_rate_entry.get())
@@ -360,15 +431,28 @@ class ObjectDetectionApp:
 
             yaml_path = filedialog.askopenfilename(title='Select the data.yaml file',
                                                    filetypes=[("YAML files", "*.yaml")])
+            
+            # Check the yaml file for labels that don't match our current labels
+            with open(yaml_path, 'r') as f:
+                data = yaml.safe_load(f)
+            
+            # Check if any labels in the data.yaml file are not in our current labels
+            yaml_labels = data['names']
+            unknown_labels = [label for label in yaml_labels if label not in self.labels]
+            
+            if unknown_labels:
+                messagebox.showerror("Unknown Labels", 
+                                     f"The following labels in the training data are not in the current model's labels: {', '.join(unknown_labels)}\n\n"
+                                     f"Please update your labels before training.")
+                return
+            
             imgsz = tk.simpledialog.askinteger("image size",
                                                "Target image size for training. All images are resized to this dimension before being fed into the model. Affects model accuracy and computational complexity.",
                                                initialvalue=1300)
             self.model_yolo.train(data=yaml_path, epochs=num_epochs, imgsz=imgsz, lr0=learning_rate)
 
-            with open(yaml_path, 'r') as f:
-                data = yaml.safe_load(f)
-
             self.labels = data['names']
+            self.labels_entry.delete('1.0', 'end')  # Clear existing content
             self.labels_entry.insert('1.0', ', '.join(self.labels))
 
         else:
@@ -386,7 +470,22 @@ class ObjectDetectionApp:
             else:
                 val_images_path = validation_path
 
-
+            # Check for unknown labels in the training data
+            unknown_labels = self.get_unknown_labels_in_folder(images_path)
+            if unknown_labels:
+                messagebox.showerror("Unknown Labels", 
+                                     f"The following labels in the training data are not in the current model's labels: {', '.join(unknown_labels)}\n\n"
+                                     f"Please update your labels before training.")
+                return
+            
+            # Also check validation data for unknown labels
+            if val_images_path != validation_path:  # Only check if it's a separate folder
+                unknown_labels_val = self.get_unknown_labels_in_folder(val_images_path)
+                if unknown_labels_val:
+                    messagebox.showerror("Unknown Labels", 
+                                         f"The following labels in the validation data are not in the current model's labels: {', '.join(unknown_labels_val)}\n\n"
+                                         f"Please update your labels before training.")
+                    return
 
             print('images path\n',images_path)
             # Load the training data
@@ -429,9 +528,10 @@ class ObjectDetectionApp:
         self.update_model_status()
         messagebox.showinfo("Model Cleared", "Model has been cleared successfully.")
 
-    def load_pretrained_model(self):
-        model_path = filedialog.askopenfilename(title="Select pretrained model file",
-                                                filetypes=[("Model files", "*.pth;*.pt")])
+    def load_pretrained_model(self, model_path=None):
+        if not model_path:
+            model_path = filedialog.askopenfilename(title="Select pretrained model file",
+                                                    filetypes=[("Model files", "*.pth;*.pt")])
         if model_path:
             self.model_path = model_path  # Store the model path
             withoutext, ext = os.path.splitext(model_path)
@@ -447,11 +547,9 @@ class ObjectDetectionApp:
             if ext == '.pth':
                 self.model = core.Model.load(model_path, self.labels)
                 self.update_model_status()
-                messagebox.showinfo("Detecto Model Loaded", "Pretrained detecto model loaded successfully.")
             elif ext == '.pt':
                 self.model_yolo = YOLO(model_path)
                 self.update_model_status()
-                messagebox.showinfo("YOLO Model Loaded", "Pretrained YOLO model loaded successfully.")
 
     def save_model(self):
         if self.use_yolo:
@@ -658,11 +756,15 @@ class ObjectDetectionApp:
             # Overlay boxes and labels on the image
             img_with_boxes = self.plot_pic(image, labels, boxes, scores, minscore=minscore)
 
-            output_image_path = "../result_image.png"
+            # Use system temp directory for output
+            output_image_path = os.path.join(tempfile.gettempdir(), 'result_image.png')
             cv2.imwrite(output_image_path, img_with_boxes)
 
             # Open the saved image using the default image viewer
-            os.startfile(output_image_path)
+            if os.path.exists(output_image_path):
+                os.startfile(output_image_path)
+            else:
+                messagebox.showerror("Error", f"Failed to save result image at {output_image_path}")
 
     def plot_pic(self, img, labels, boxes, scores, size=5, minscore=.3):
         img = copy.copy(img)
@@ -755,7 +857,56 @@ class ObjectDetectionApp:
         self.labels = split_labels
 
         messagebox.showinfo("Labels Set", f"Labels set to:\n{', '.join(self.labels)}")
+
+    def get_unknown_labels_in_folder(self, folder_path):
+        """Check if the folder contains XML files with labels that are not in self.labels"""
+        unknown_labels = set()
+        
+        # Iterate through XML files in the folder
+        for filename in os.listdir(folder_path):
+            if filename.endswith('.xml'):
+                file_path = os.path.join(folder_path, filename)
+                
+                # Load XML data
+                try:
+                    tree = ET.parse(file_path)
+                    root = tree.getroot()
+                    
+                    # Extract object names
+                    for obj in root.findall('.//object'):
+                        name = obj.find('name').text
+                        if name not in self.labels:
+                            unknown_labels.add(name)
+                except ET.ParseError:
+                    print(f"Error parsing XML file: {file_path}")
+                except Exception as e:
+                    print(f"Error processing file {file_path}: {str(e)}")
+        
+        return list(unknown_labels)
+
     # endregion
+
+    def clear_console(self):
+        """Clear the console text widget"""
+        self.console_text.delete('1.0', tk.END)
+    
+    def save_console_output(self):
+        """Save the console output to a file"""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        if file_path:
+            with open(file_path, "w") as f:
+                f.write(self.console_text.get('1.0', tk.END))
+            messagebox.showinfo("Console Output Saved", f"Console output saved to {file_path}")
+
+    # Restore original stdout when the application closes
+    def __del__(self):
+        try:
+            sys.stdout = self.original_stdout
+        except:
+            pass
 
 if __name__ == "__main__":
     root = tk.Tk()
